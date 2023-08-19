@@ -60,7 +60,7 @@
 </table>
 <h2>Running Image :</h2>
 <p>Here are some example snippets to help you get started creating a container.</p>
-<h3>docker-compose (recommended, <a href="https://itnext.io/a-beginners-guide-to-deploying-a-docker-application-to-production-using-docker-compose-de1feccd2893" rel="nofollow noopener">click here for more info</a>) </h3>
+<h3>Docker Compose (recommended, <a href="https://itnext.io/a-beginners-guide-to-deploying-a-docker-application-to-production-using-docker-compose-de1feccd2893" rel="nofollow noopener">click here for more info</a>) </h3>
 <pre><code>---
 version: "3.9"
 services:
@@ -121,7 +121,7 @@ services:
       - /host/path/to/Game-Library:/data/Game-Library
     restart: unless-stopped
 </code></pre>
-<h3>docker cli ( <a href="https://docs.docker.com/engine/reference/commandline/cli/" rel="nofollow noopener">click here for more info</a>) </h3>
+<h3>Docker CLI ( <a href="https://docs.docker.com/engine/reference/commandline/cli/" rel="nofollow noopener">click here for more info</a>) </h3>
 <pre><code>docker run -d \
   --name=samba-server-alpine \
       -e TZ=Asia/Dhaka \
