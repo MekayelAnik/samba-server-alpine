@@ -409,4 +409,4 @@ echo ""  >> /etc/samba/smb.conf
 echo "#============================ CONFIGURATION FOR TEMP SHARE ENDS HERE ============================" >> /etc/samba/smb.conf
 fi
 echo "#============================ CONFIGURATION FOR NAS ENDS HERE ============================" >> /etc/samba/smb.conf
-smbd
+exit 0

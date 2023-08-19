@@ -80,4 +80,4 @@ else
        	 	fi
 	fi
 fi
-smbd
+exit 0
