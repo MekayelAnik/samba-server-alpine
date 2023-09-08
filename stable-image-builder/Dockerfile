@@ -14,8 +14,7 @@ RUN echo https://dl-cdn.alpinelinux.org/alpine/edge/main > /etc/apk/repositories
     echo https://dl-cdn.alpinelinux.org/alpine/edge/community >> /etc/apk/repositories && \
     apk --update-cache --no-cache upgrade && \
     apk add --update-cache --no-cache samba tzdata bash && \
-    rm -rf /var/cache/apk/* && \
-    rm -rf /etc/samba/*
+    rm -rf /var/cache/apk/*
 
 # Define service entrypoint
 CMD ["/usr/bin/smbd.sh"]
