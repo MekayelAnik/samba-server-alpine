@@ -1,0 +1,7 @@
+
+stable-image-builder/*.log
+test-image-builder/*.log
+latest-image-builder/*.log
+stable-image-builder/build-timestamp
+test-image-builder/build-timestamp
+latest-image-builder/build-timestamp
