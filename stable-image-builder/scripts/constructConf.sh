@@ -66,7 +66,7 @@ fi
 # Global Encrytion Enable/Disable/Auto
 
 GLOBAL_ENCRYPT=$(echo "${GLOBAL_ENCRYPT}" | tr '[:upper:]' '[:lower:]')
-if [ "${GLOBAL_ENCRYPT}" == 'required' ] || [ "${GLOBAL_ENCRYPT}" == 'yes' ] || [ "${GLOBAL_ENCRYPT}" == 'ok' ] || [ "${GLOBAL_ENCRYPT}" == 'y' ] || [ "${GLOBAL_ENCRYPT}" == 'ya' ]; then
+if [ "${GLOBAL_ENCRYPT}" == 'required' ] || [ "${GLOBAL_ENCRYPT}" == 'enable' ] || [ "${GLOBAL_ENCRYPT}" == 'enabled' ] || [ "${GLOBAL_ENCRYPT}" == 'yes' ] || [ "${GLOBAL_ENCRYPT}" == 'ok' ] || [ "${GLOBAL_ENCRYPT}" == 'y' ] || [ "${GLOBAL_ENCRYPT}" == 'mandatory' ] || [ "${GLOBAL_ENCRYPT}" == 'ya' ]; then
 	GLOBAL_ENCRYPT="required"
 elif [ "${GLOBAL_ENCRYPT}" == 'disable' ] || [ "${GLOBAL_ENCRYPT}" == 'd' ] || [ "${GLOBAL_ENCRYPT}" == 'off' ] || [ "${GLOBAL_ENCRYPT}" == 'no' ] || [ "${GLOBAL_ENCRYPT}" == 'n' ]; then
 	GLOBAL_ENCRYPT="disabled"
