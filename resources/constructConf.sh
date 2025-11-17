@@ -1,5 +1,6 @@
 #!/bin/bash
-#===================================== GLOBAL CONFIGURATION =============================
+#===================================== GLOBAL CONFIGURATION START =============================
+global-config(){
 echo "[global]" > /etc/samba/smb.conf
 
 # Configure WORKGROUP
@@ -125,8 +126,12 @@ elif [ "${MAP_TO_GUEST}" == 'bad password' ] ||  [ "${MAP_TO_GUEST}" == 'badpass
 fi
 
 # Mapping Guests to GUEST ACCOUNT
-
-if [ -n "${GUEST_ACCOUNT}" ]; then
+if [[ -e /etc/samba/guest.acc ]]; then
+	if [ -n "${GUEST_ACCOUNT}" ]; then
+		:
+	else
+		GUEST_ACCOUNT='guest'
+	fi
 	echo "   guest account = $GUEST_ACCOUNT" >> /etc/samba/smb.conf
 fi
 
@@ -167,7 +172,8 @@ echo "   # Special configuration for Apple's Time Machine" >> /etc/samba/smb.con
 echo "   fruit:aapl = yes" >> /etc/samba/smb.conf
 echo "   fruit:copyfile = yes" >> /etc/samba/smb.conf
 echo "   fruit:nfs_aces = no" >> /etc/samba/smb.conf
-
+#===================================== GLOBAL CONFIGURATION END =============================
+}
 echo "#============================ CONFIGURATION FOR NAS STARTS HERE ============================" >> /etc/samba/smb.conf
 echo "" >> /etc/samba/smb.conf
 echo "#============================ SHARE DEFINATIONS ==============================" >> /etc/samba/smb.conf
@@ -263,11 +269,21 @@ echo "[${!SHARE_NAME}]" >> /etc/samba/smb.conf
 				echo "   valid users = ${!SHARE_VALID_USERS}" >> /etc/samba/smb.conf
 			fi
 
+# Function to enable GUEST ACCOUNT
+enable-guest-account(){
+				if [[ -e /etc/samba/guest.acc ]]; then
+					:
+				else
+					touch /etc/samba/guest.acc
+				fi
+}
+
 # Configure PUBLIC and GUEST OK
 			SHARE_GUEST_OK=$(echo "${!SHARE_GUEST_OK}" | tr '[:upper:]' '[:lower:]')
 			SHARE_PUBLIC=$(echo "${!SHARE_PUBLIC}" | tr '[:upper:]' '[:lower:]')
 			if [ "${SHARE_GUEST_OK}" == 'yes' ] || [ "${SHARE_GUEST_OK}" == 'y' ] || [ "${SHARE_GUEST_OK}" == 'ye' ] || [ "${SHARE_GUEST_OK}" == 'true' ] || [ "${SHARE_GUEST_OK}" == 't' ]; then
   				SHARE_PUBLIC=yes
+				enable-guest-account
 			elif [ "${SHARE_PUBLIC}" == 'yes' ] || [ "${SHARE_PUBLIC}" == 'y' ] || [ "${SHARE_PUBLIC}" == 'ye' ] || [ "${SHARE_PUBLIC}" == 'true' ] || [ "${SHARE_PUBLIC}" == 't' ]; then
 				SHARE_PUBLIC=yes
 			else SHARE_PUBLIC=no
@@ -279,6 +295,7 @@ echo "[${!SHARE_NAME}]" >> /etc/samba/smb.conf
 			if [ "${SHARE_GUEST_ONLY}" == 'yes' ] || [ "${SHARE_GUEST_ONLY}" == 'y' ] || [ "${SHARE_GUEST_ONLY}" == 'true' ] || [ "${SHARE_GUEST_ONLY}" == 't' ] && [ -z "${!SHARE_VALID_USERS}" ]; then
 				SHARE_GUEST_ONLY=yes
 				SHARE_PUBLIC=yes
+				enable-guest-account
 			else
 				SHARE_GUEST_ONLY=no
 			fi
