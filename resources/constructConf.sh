@@ -1,517 +1,432 @@
 #!/bin/bash
-#===================================== GLOBAL CONFIGURATION START =============================
-global-config(){
-echo "[global]" > /etc/samba/smb.conf
+set -euo pipefail
+IFS=$'\n\t'
 
-# Configure WORKGROUP
+readonly SMB_CONF="/etc/samba/smb.conf"
+readonly GUEST_ACC="/etc/samba/guest.acc"
+readonly DATA_DIR="/data"
 
-if [ -z "${SMB_WORKGROUP}" ]; then
-	echo "   workgroup = WORKGROUP" >> /etc/samba/smb.conf
-else
-	echo "   workgroup = ${SMB_WORKGROUP}" >> /etc/samba/smb.conf
-fi
-
-# Configure SERVER STRING
-
-if [ -z "${SERVER_STRING}" ]; then
-        echo "   server string = Samba Server"  >> /etc/samba/smb.conf
-else
-	echo "   server string = ${SERVER_STRING}" >> /etc/samba/smb.conf
-fi
-
-# Configure SERVER MIN PROTOCOL
-
-if [ -z "${SERVER_MIN_PROTOCOL}" ]; then
-	echo "   server min protocol = SMB2_10" >> /etc/samba/smb.conf
-else
-	echo "   server min protocol = ${SERVER_MIN_PROTOCOL}" >> /etc/samba/smb.conf
-fi
-
-# Configure SERVER ROLE
-	SERVER_ROLE=$(echo "${MULTI_CHANNEL_SUPPORT}" | tr '[:lower:]' '[:upper:]')
-if [ -z "${SERVER_ROLE}" ] || [ "${SERVER_ROLE}" == 'AUTO' ]; then
-	echo "   server role = AUTO" >> /etc/samba/smb.conf
-elif [ "${SERVER_ROLE}" == 'STANDALONE' ]; then
-	echo "   server role = STANDALONE" >> /etc/samba/smb.conf
-elif [ "${SERVER_ROLE}" == 'MEMBER SERVER' ]; then
-	echo "   server role = MEMBER SERVER" >> /etc/samba/smb.conf
-elif [ "${SERVER_ROLE}" == 'CLASSIC PRIMARY DOMAIN CONTROLLER' ]; then
-	echo "   server role = CLASSIC PRIMARY DOMAIN CONTROLLER" >> /etc/samba/smb.conf
-elif [ "${SERVER_ROLE}" == 'ACTIVE DIRECTORY DOMAIN CONTROLLER' ]; then
-	echo "   server role = ACTIVE DIRECTORY DOMAIN CONTROLLER" >> /etc/samba/smb.conf
-elif [ "${SERVER_ROLE}" == 'IPA DOMAIN CONTROLLER' ]; then
-	echo "   server role = IPA DOMAIN CONTROLLER" >> /etc/samba/smb.conf
-else :
-fi
-
-# Enable/Disable MULTI CHANNEL SPEED AGGRAGATION
-MULTI_CHANNEL_SUPPORT=$(echo "${MULTI_CHANNEL_SUPPORT}" | tr '[:upper:]' '[:lower:]')
-	if [ "${MULTI_CHANNEL_SUPPORT}" == 'yes' ] || [ "${MULTI_CHANNEL_SUPPORT}" == 'ye' ] || [ "${MULTI_CHANNEL_SUPPORT}" == 't' ] || [ "${MULTI_CHANNEL_SUPPORT}" == 'y' ] || [ "${MULTI_CHANNEL_SUPPORT}" == 'true' ]; then
-		MULTI_CHANNEL_SUPPORT=yes
-		echo "   server multi channel support = ${MULTI_CHANNEL_SUPPORT}" >> /etc/samba/smb.conf
-		echo "   aio read size = 1" >> /etc/samba/smb.conf
-		echo "   aio write size = 1" >> /etc/samba/smb.conf
-	else
-	        MULTI_CHANNEL_SUPPORT=no
-		echo "   server multi channel support = ${MULTI_CHANNEL_SUPPORT}" >> /etc/samba/smb.conf
-	fi
-# Configure Allowed CLIENTS to the Server
-
-if [ -z "${ALLOWED_HOSTS}" ]; then
-	echo ";  hosts allow = 192.168.1. 192.168.2. 127." >> /etc/samba/smb.conf
-
-elif [ -n "${ALLOWED_HOSTS}" ]; then
-	echo "   hosts allow = $ALLOWED_HOSTS" >> /etc/samba/smb.conf
-fi
-
-# Global Encrytion Enable/Disable/Auto
-
-GLOBAL_ENCRYPT=$(echo "${GLOBAL_ENCRYPT}" | tr '[:upper:]' '[:lower:]')
-if [ "${GLOBAL_ENCRYPT}" == 'required' ] || [ "${GLOBAL_ENCRYPT}" == 'enable' ] || [ "${GLOBAL_ENCRYPT}" == 'enabled' ] || [ "${GLOBAL_ENCRYPT}" == 'yes' ] || [ "${GLOBAL_ENCRYPT}" == 'ok' ] || [ "${GLOBAL_ENCRYPT}" == 'y' ] || [ "${GLOBAL_ENCRYPT}" == 'mandatory' ] || [ "${GLOBAL_ENCRYPT}" == 'ya' ]; then
-	GLOBAL_ENCRYPT="required"
-elif [ "${GLOBAL_ENCRYPT}" == 'disable' ] || [ "${GLOBAL_ENCRYPT}" == 'd' ] || [ "${GLOBAL_ENCRYPT}" == 'off' ] || [ "${GLOBAL_ENCRYPT}" == 'no' ] || [ "${GLOBAL_ENCRYPT}" == 'n' ]; then
-	GLOBAL_ENCRYPT="disabled"
-else
- 	GLOBAL_ENCRYPT="auto"
-fi
-
- echo "	server smb encrypt = ${GLOBAL_ENCRYPT}" >> /etc/samba/smb.conf
-
-# Enable/Disable  NETBIOS
-
-DISABLE_NETBIOS=$(echo "${DISABLE_NETBIOS}" | tr '[:upper:]' '[:lower:]')
-if [ "${DISABLE_NETBIOS}" == 'yes' ] || [ "${DISABLE_NETBIOS}" == 'y' ] || [ "${DISABLE_NETBIOS}" == 'true' ] || [ "${DISABLE_NETBIOS}" == 't' ] || [ "${DISABLE_NETBIOS}" == 'ye' ]; then
-	DISABLE_NETBIOS=yes
-	echo "   disable netbios = ${DISABLE_NETBIOS}" >> /etc/samba/smb.conf
-else 
-	DISABLE_NETBIOS=no
-	echo "   disable netbios = ${DISABLE_NETBIOS}" >> /etc/samba/smb.conf
-
-fi
-
-#===================================== SERVER PORTS =============================
-# Configure NETBIOS PORT
-
-if  [[ "${NETBIOS_PORT}" =~ ^[0-9]+$ ]]; then
-	:
-else
-	NETBIOS_PORT=139
-fi
-
-# Configure SMB CONNECTION PORT
-
-if  [[ "${SMB_PORT}" =~ ^[0-9]+$ ]]; then
-	:
-else
-	SMB_PORT=445
-fi
-
-if [ "${DISABLE_NETBIOS}" == 'yes' ]; then
-	echo "   smb ports = ${SMB_PORT}" >> /etc/samba/smb.conf
-elif [[ "${DISABLE_NETBIOS}" == 'no' ]]; then
-	echo "   smb ports = ${SMB_PORT} ${NETBIOS_PORT}" >> /etc/samba/smb.conf
-fi
-
-# MAP to GUESTS
-
-MAP_TO_GUEST=$(echo "${MAP_TO_GUEST}" | tr '[:upper:]' '[:lower:]')
-if [ -z "${MAP_TO_GUEST}" ]; then
-	:
-elif [ "${MAP_TO_GUEST}" == 'bad user' ] ||  [ "${MAP_TO_GUEST}" == 'baduser' ] ; then
-	MAP_TO_GUEST='Bad User'
-	echo "   map to guest = ${MAP_TO_GUEST}" >> /etc/samba/smb.conf
-elif [ "${MAP_TO_GUEST}" == 'bad password' ] ||  [ "${MAP_TO_GUEST}" == 'badpassword' ]; then
-	MAP_TO_GUEST='Bad Password'
-	echo "   map to guest = ${MAP_TO_GUEST}" >> /etc/samba/smb.conf
-fi
-
-# Mapping Guests to GUEST ACCOUNT
-if [[ -e /etc/samba/guest.acc ]]; then
-	if [ -n "${GUEST_ACCOUNT}" ]; then
-		:
-	else
-		GUEST_ACCOUNT='guest'
-	fi
-	echo "   guest account = $GUEST_ACCOUNT" >> /etc/samba/smb.conf
-fi
-
-# Log File Location
-echo "   log file = /usr/local/samba/var/log.%m" >> /etc/samba/smb.conf
-
-
-# Configure Log File Size
-
-if [[ "${MAX_LOG_SIZE}" =~ ^[0-9]+$ ]]; then
-    echo "   max log size = $MAX_LOG_SIZE" >> /etc/samba/smb.conf
-else
-    echo "   max log size = 50" >> /etc/samba/smb.conf
-fi
-
-# Configure DNS Proxy
-
-DNS_PROXY=$(echo "${DNS_PROXY}" | tr '[:upper:]' '[:lower:]')
-if [ "${DNS_PROXY}" == 'yes' ] || [ "${DNS_PROXY}" == 'y' ] ||  [ "${DNS_PROXY}" == 'true' ] || [ "${DNS_PROXY}" == 't' ]; then
-	DNS_PROXY=yes
-else
-	DNS_PROXY=no
-fi
-echo "   dns proxy = $DNS_PROXY" >> /etc/samba/smb.conf
-
-if [[ -z "${SOCKET_OPTIONS}" ]]; then
-    SOCKET_OPTIONS="TCP_NODELAY IPTOS_LOWDELAY"
-fi
-echo "   socket options = ${SOCKET_OPTIONS}" >> /etc/samba/smb.conf
-echo "   unix extensions = yes" >> /etc/samba/smb.conf
-echo "   wide links = no" >> /etc/samba/smb.conf
-echo "   create mask = 0777" >> /etc/samba/smb.conf
-echo "   directory mask = 0777" >> /etc/samba/smb.conf
-echo "   use sendfile = yes" >> /etc/samba/smb.conf
-echo "   aio read size = 1" >> /etc/samba/smb.conf
-echo "   aio write size = 1" >> /etc/samba/smb.conf
-echo "   # Special configuration for Apple's Time Machine" >> /etc/samba/smb.conf
-echo "   fruit:aapl = yes" >> /etc/samba/smb.conf
-echo "   fruit:copyfile = yes" >> /etc/samba/smb.conf
-echo "   fruit:nfs_aces = no" >> /etc/samba/smb.conf
-#===================================== GLOBAL CONFIGURATION END =============================
-}
-echo "#============================ CONFIGURATION FOR NAS STARTS HERE ============================" >> /etc/samba/smb.conf
-echo "" >> /etc/samba/smb.conf
-echo "#============================ SHARE DEFINATIONS ==============================" >> /etc/samba/smb.conf
-if [ "${NUMBER_OF_SHARES}" -ge 1 ]; then
-	for ((i=1; i<="${NUMBER_OF_SHARES}"; i++))
-	do
-		SHARE_NAME=SHARE_NAME_${i}
-		SHARE_ENCRYPT=SHARE_${i}_ENCRYPT
-		SHARE_EA=SHARE_${i}_ENABLE_EXTENDED_ATTRIBUTE
-		SHARE_DOS_ATTRIBUTE=SHARE_${i}_ENABLE_DOS_ATTRIBUTE
-		SHARE_GUEST_ONLY=SHARE_${i}_GUEST_ONLY
-		SHARE_WRITEABLE=SHARE_${i}_WRITEABLE
-		SHARE_WRITE_LIST=SHARE_${i}_WRITE_LIST
-		SHARE_READ_ONLY=SHARE_${i}_READ_ONLY
-		SHARE_READ_LIST=SHARE_${i}_READ_LIST
-		SHARE_BROWSEABLE=SHARE_${i}_BROWSEABLE
-		SHARE_VALID_USERS=SHARE_${i}_VALID_USERS
-		SHARE_PUBLIC=SHARE_${i}_PUBLIC
-		SHARE_GUEST_OK=SHARE_${i}_GUEST_OK
-		SHARE_CREATE_MASK=SHARE_${i}_CREATE_MASK
-		SHARE_FORCE_CREATE_MASK=SHARE_${i}_FORCE_CREATE_MASK
-		SHARE_DIRECTORY_MASK=SHARE_${i}_DIRECTORY_MASK
-		SHARE_FORCE_DIRECTORY_MASK=SHARE_${i}_FORCE_DIRECTORY_MASK
-		SHARE_FORCE_USER=SHARE_${i}_FORCE_USER
-		SHARE_FORCE_GROUP=SHARE_${i}_FORCE_GROUP
-		SHARE_COMMENT=SHARE_${i}_COMMENT
-		SHARE_BTRFS=SHARE_${i}_IS_BTRFS
-		SHARE_RECYCLE_BIN=SHARE_${i}_RECYCLE_BIN
-		RECYCLE_MAX_SIZE=SHARE_${i}_RECYCLE_MAX_SIZE
-		RECYCLE_DIRECTORY_MODE=SHARE_${i}_RECYCLE_DIRECTORY_MODE
-		RECYCLE_SUB_DIRECTORY_MODE=SHARE_${i}_RECYCLE_SUB_DIRECTORY_MODE
-echo "#============================ CONFIGURATION FOR USER SHARE: [${!SHARE_NAME}] ============================" >> /etc/samba/smb.conf
-
-# Configure SHARE NAME
-			if [ -z "${!SHARE_NAME}" ]; then
-				echo "You have set the value of  NUMBER_OF_SHARES environtment to $NUMBER_OF_SHARES. So you have to set all of:"
-				for ((j=1; j<="${NUMBER_OF_SHARES}"; j++))
-				do
-					echo "SHARE_NAME_${j}"
-				done
-				echo "Exiting..."
-				exit 1
-			fi
-echo "[${!SHARE_NAME}]" >> /etc/samba/smb.conf
-
-# Configure SHARE COMMENT
-			if [ -z "${!SHARE_COMMENT}" ]; then
-				:
-			else
-				echo "   comment = ${!SHARE_COMMENT}" >> /etc/samba/smb.conf
-			fi
-
-# Configure SHARE PATH
-		echo "   path = /data/${!SHARE_NAME}" >> /etc/samba/smb.conf
-
-# Encrypt SMB SHARE
-		if [ "$GLOBAL_ENCRYPT" == 'auto' ]; then
-			SHARE_ENCRYPT=$(echo "${!SHARE_ENCRYPT}" | tr '[:upper:]' '[:lower:]')
-			if [ "${SHARE_ENCRYPT}" == 'required' ] || [ "${SHARE_ENCRYPT}" == 'require' ] || [ "${SHARE_ENCRYPT}" == 'mandatory' ] || [ "${SHARE_ENCRYPT}" == 'enabled' ] || [ "${SHARE_ENCRYPT}" == 'enable' ] || [ "${SHARE_ENCRYPT}" == 'yes' ] || [ "${SHARE_ENCRYPT}" == 'ok' ] || [ "${SHARE_ENCRYPT}" == 'y' ] || [ "${SHARE_ENCRYPT}" == 'ya' ]; then
-				SHARE_ENCRYPT="required"
-			elif [ "${SHARE_ENCRYPT}" == 'disable' ] || [ "${SHARE_ENCRYPT}" == 'd' ] || [ "${SHARE_ENCRYPT}" == 'off' ] || [ "${SHARE_ENCRYPT}" == 'no' ] || [ "${SHARE_ENCRYPT}" == 'n' ] || [ "${SHARE_ENCRYPT}" == 'disabled' ]; then
-				SHARE_ENCRYPT="disabled"
-			else
- 				SHARE_ENCRYPT="auto"
-			fi
-			echo "   server smb encrypt = ${SHARE_ENCRYPT}" >> /etc/samba/smb.conf
-		fi
-
-# Configure EXTENDED-ATTRIBUTE Enable/Disable
-
-		SHARE_EA=$(echo "${!SHARE_EA}" | tr '[:upper:]' '[:lower:]')
-		if [ "${SHARE_EA}" == 'no' ] || [ "${SHARE_EA}" == 'disable' ] ||  [ "${SHARE_EA}" == 'disabled' ] || [ "${SHARE_EA}" == 'n' ] || [ "${SHARE_EA}" == 'd' ] || [ "${SHARE_EA}" == 'na' ]; then
-			SHARE_EA="no"
-		else
- 			SHARE_EA="yes"
-		fi
-		echo "   ea support = ${SHARE_EA}" >> /etc/samba/smb.conf
-
-# Configure DOS-ATTRIBUTE Enable/Disable
-
-		SHARE_DOS_ATTRIBUTE=$(echo "${!SHARE_DOS_ATTRIBUTE}" | tr '[:upper:]' '[:lower:]')
-		if [ "${SHARE_DOS_ATTRIBUTE}" == 'no' ] || [ "${SHARE_DOS_ATTRIBUTE}" == 'disable' ] || [ "${SHARE_DOS_ATTRIBUTE}" == 'disabled' ] || [ "${SHARE_DOS_ATTRIBUTE}" == 'n' ] || [ "${SHARE_DOS_ATTRIBUTE}" == 'd' ] || [ "${SHARE_DOS_ATTRIBUTE}" == 'na' ]; then
-			SHARE_DOS_ATTRIBUTE="no"
-		else
- 			SHARE_DOS_ATTRIBUTE="yes"
-		fi
-		echo "   store dos attributes = ${SHARE_DOS_ATTRIBUTE}" >> /etc/samba/smb.conf
-
-# Configure  VALID-USERS
-			if [ -z "${!SHARE_VALID_USERS}" ]; then
-				:
-			else
-				echo "   valid users = ${!SHARE_VALID_USERS}" >> /etc/samba/smb.conf
-			fi
-
-# Function to enable GUEST ACCOUNT
-enable-guest-account(){
-				if [[ -e /etc/samba/guest.acc ]]; then
-					:
-				else
-					touch /etc/samba/guest.acc
-				fi
+log_error() {
+    echo "[ERROR] $*" >&2
 }
 
-# Configure PUBLIC and GUEST OK
-			SHARE_GUEST_OK=$(echo "${!SHARE_GUEST_OK}" | tr '[:upper:]' '[:lower:]')
-			SHARE_PUBLIC=$(echo "${!SHARE_PUBLIC}" | tr '[:upper:]' '[:lower:]')
-			if [ "${SHARE_GUEST_OK}" == 'yes' ] || [ "${SHARE_GUEST_OK}" == 'y' ] || [ "${SHARE_GUEST_OK}" == 'ye' ] || [ "${SHARE_GUEST_OK}" == 'true' ] || [ "${SHARE_GUEST_OK}" == 't' ]; then
-  				SHARE_PUBLIC=yes
-				enable-guest-account
-			elif [ "${SHARE_PUBLIC}" == 'yes' ] || [ "${SHARE_PUBLIC}" == 'y' ] || [ "${SHARE_PUBLIC}" == 'ye' ] || [ "${SHARE_PUBLIC}" == 'true' ] || [ "${SHARE_PUBLIC}" == 't' ]; then
-				SHARE_PUBLIC=yes
-			else SHARE_PUBLIC=no
-			fi
-			echo "   public = ${SHARE_PUBLIC}" >> /etc/samba/smb.conf
+validate_numeric() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
 
-# Configure GUEST ONLY
-			SHARE_GUEST_ONLY=$(echo "${!SHARE_GUEST_ONLY}" | tr '[:upper:]' '[:lower:]')
-			if [ "${SHARE_GUEST_ONLY}" == 'yes' ] || [ "${SHARE_GUEST_ONLY}" == 'y' ] || [ "${SHARE_GUEST_ONLY}" == 'true' ] || [ "${SHARE_GUEST_ONLY}" == 't' ] && [ -z "${!SHARE_VALID_USERS}" ]; then
-				SHARE_GUEST_ONLY=yes
-				SHARE_PUBLIC=yes
-				enable-guest-account
-			else
-				SHARE_GUEST_ONLY=no
-			fi
-			echo "   guest only = ${SHARE_GUEST_ONLY}" >> /etc/samba/smb.conf
+normalize_bool() {
+    local val="${1,,}"
+    case "$val" in
+        yes|y|ye|true|t|1) echo "yes" ;;
+        no|n|false|f|0) echo "no" ;;
+        *) echo "${2:-no}" ;;
+    esac
+}
 
-# Configure BROWSABLE
-			SHARE_BROWSEABLE=$(echo "${!SHARE_BROWSEABLE}" | tr '[:upper:]' '[:lower:]')
-			if [ "${SHARE_BROWSEABLE}" == 'no' ] || [ "${SHARE_BROWSEABLE}" == 'n' ] || [ "${SHARE_BROWSEABLE}" == 'false' ] || [ "${SHARE_BROWSEABLE}" == 'f' ]; then
-				SHARE_BROWSEABLE=no
-			else
-				SHARE_BROWSEABLE=yes
-			fi
-			echo "   browseable = ${SHARE_BROWSEABLE}" >> /etc/samba/smb.conf
+write_conf() {
+    printf '%s\n' "$1" >> "$SMB_CONF"
+}
 
-# Configure READ-ONLY and WRITABLE
-			SHARE_READ_ONLY=$(echo "${!SHARE_READ_ONLY}" | tr '[:upper:]' '[:lower:]')
-			SHARE_WRITEABLE=$(echo "${!SHARE_WRITEABLE}" | tr '[:upper:]' '[:lower:]')
-			if [ "${SHARE_READ_ONLY}" == 'no' ] || [ "${SHARE_READ_ONLY}" == 'n' ] || [ "${SHARE_READ_ONLY}" == 'false' ] || [ "${SHARE_READ_ONLY}" == 'f' ]; then
-				SHARE_WRITEABLE=yes
-			elif [ "${SHARE_WRITEABLE}" == 'yes' ] || [ "${SHARE_WRITEABLE}" == 'y' ] || [ "${SHARE_WRITEABLE}" == 'true' ] || [ "${SHARE_WRITEABLE}" == 't' ]; then
-				SHARE_WRITEABLE=yes
-			else SHARE_WRITEABLE=no
-			fi
-			echo "   writable = ${SHARE_WRITEABLE}" >> /etc/samba/smb.conf
+get_share_indices() {
+    compgen -v SHARE_NAME_ 2>/dev/null | sed 's/SHARE_NAME_//' || true
+}
 
-#  Configure READ-LIST
-			if [ -z "${!SHARE_READ_LIST}" ]; then
-				:
-			else
-				echo "   read list = ${!SHARE_READ_LIST}" >> /etc/samba/smb.conf
-			fi
+create_share_directories() {
+    local share_indices
+    share_indices=$(get_share_indices)
+    
+    [[ -z "$share_indices" ]] && return
+    
+    while IFS= read -r i; do
+        local share_name_var="SHARE_NAME_$i"
+        local share_name="${!share_name_var:-}"
+        
+        [[ -z "$share_name" ]] && continue
+        
+        local share_path="$DATA_DIR/$share_name"
+        [[ ! -e "$share_path" ]] && mkdir -p "$share_path"
+        
+        local recycle_var="SHARE_${i}_RECYCLE_BIN"
+        local recycle
+        recycle=$(normalize_bool "${!recycle_var:-no}" "no")
+        
+        if [[ "$recycle" == "yes" ]]; then
+            local recycle_path="$share_path/.recycle"
+            [[ ! -e "$recycle_path" ]] && mkdir -p "$recycle_path"
+        fi
+    done <<< "$share_indices"
+    
+    local temp_on
+    temp_on=$(normalize_bool "${TEMP_SHARE_ON:-no}" "no")
+    
+    if [[ "$temp_on" == "yes" ]]; then
+        local temp_name="${TEMP_SHARE_NAME:-temp-share}"
+        local temp_path="$DATA_DIR/$temp_name"
+        [[ ! -e "$temp_path" ]] && mkdir -p "$temp_path"
+        
+        local temp_recycle
+        temp_recycle=$(normalize_bool "${TEMP_RECYCLE_BIN:-no}" "no")
+        
+        if [[ "$temp_recycle" == "yes" ]]; then
+            local temp_recycle_path="$temp_path/.recycle"
+            [[ ! -e "$temp_recycle_path" ]] && mkdir -p "$temp_recycle_path"
+        fi
+    fi
+}
 
-#  Configure WRITE-LIST
-			if [ -z "${!SHARE_WRITE_LIST}" ]; then
-				:
-			else
-				echo "   write list = ${!SHARE_WRITE_LIST}" >> /etc/samba/smb.conf
-			fi
+global_config() {
+    cat > "$SMB_CONF" << 'EOF'
+[global]
+EOF
 
-# Settings for CREATE-MASK
-			if  [[ "${!SHARE_CREATE_MASK}" =~ ^[0-9]+$ ]]; then
-				echo "   create mask = ${!SHARE_CREATE_MASK}" >> /etc/samba/smb.conf
-			else
-				:
-			fi
+    write_conf "   log level = ${SMB_LOG_LEVEL:-1}"
+    write_conf "   log file = /usr/local/samba/var/log.%m"
+    write_conf "   max log size = ${MAX_LOG_SIZE:-50}"
+    write_conf "   deadtime = ${SMB_DEADTIME:-15}"
+    write_conf "   max open files = ${SMB_MAX_OPEN_FILES:-30000}"
 
-# Settings for FORCE-CREATE-MASK
-			if  [[ "${!SHARE_FORCE_CREATE_MASK}" =~ ^[0-9]+$ ]]; then
-				echo "  force create mask = ${!SHARE_FORCE_CREATE_MASK}" >> /etc/samba/smb.conf
-			else
-				:
-			fi
+    write_conf "   workgroup = ${SMB_WORKGROUP:-WORKGROUP}"
+    write_conf "   server string = ${SERVER_STRING:-Samba Server}"
+    write_conf "   server min protocol = ${SERVER_MIN_PROTOCOL:-SMB2}"
 
-# Settings for DIRECTORY-MASK
-			if  [[ "${!SHARE_DIRECTORY_MASK}" =~ ^[0-9]+$ ]]; then
-				echo "   directory mask = ${!SHARE_DIRECTORY_MASK}" >> /etc/samba/smb.conf
-			else
-				:
-			fi
+    local role="${SERVER_ROLE:-AUTO}"
+    role="${role^^}"
+    case "$role" in
+        STANDALONE|"MEMBER SERVER"|"CLASSIC PRIMARY DOMAIN CONTROLLER"|"ACTIVE DIRECTORY DOMAIN CONTROLLER"|"IPA DOMAIN CONTROLLER")
+            write_conf "   server role = $role"
+            ;;
+        *)
+            write_conf "   server role = AUTO"
+            ;;
+    esac
 
-# Settings for FORCE-DIRECTORY-MASK
-			if  [[ "${!SHARE_FORCE_DIRECTORY_MASK}" =~ ^[0-9]+$ ]]; then
-				echo "  force directory mask = ${!SHARE_FORCE_DIRECTORY_MASK}" >> /etc/samba/smb.conf
-			else
-				:
-			fi
+    local multi_channel
+    multi_channel=$(normalize_bool "${MULTI_CHANNEL_SUPPORT:-no}" "no")
+    write_conf "   server multi channel support = $multi_channel"
 
-# Settings for FORCE-USER
-			if [ -z "${!SHARE_FORCE_USER}" ]; then
-				:
-			else
-				echo "   force user = ${!SHARE_FORCE_USER}" >> /etc/samba/smb.conf
-			fi
+    write_conf "   socket options = ${SOCKET_OPTIONS:-TCP_NODELAY IPTOS_LOWDELAY SO_KEEPALIVE}"
 
-# Settings for FORCE-GROUP
-			if [ -z "${!SHARE_FORCE_GROUP}" ]; then
-				:
-			else
-				echo "   force group = ${!SHARE_FORCE_GROUP}" >> /etc/samba/smb.conf
-			fi
+    local dns_proxy
+    dns_proxy=$(normalize_bool "${DNS_PROXY:-no}" "no")
+    write_conf "   dns proxy = $dns_proxy"
 
+    write_conf "   use sendfile = yes"
+    write_conf "   min receivefile size = ${SMB_MIN_RECEIVEFILE_SIZE:-16384}"
+    write_conf "   aio read size = 1"
+    write_conf "   aio write size = 1"
 
+    local strict_locking oplocks level2_oplocks
+    strict_locking=$(normalize_bool "${SMB_STRICT_LOCKING:-no}" "no")
+    oplocks=$(normalize_bool "${SMB_OPLOCKS:-yes}" "yes")
+    level2_oplocks=$(normalize_bool "${SMB_LEVEL2_OPLOCKS:-yes}" "yes")
+    write_conf "   strict locking = $strict_locking"
+    write_conf "   oplocks = $oplocks"
+    write_conf "   level2 oplocks = $level2_oplocks"
 
+    if [[ -n "${ALLOWED_HOSTS:-}" ]]; then
+        write_conf "   hosts allow = $ALLOWED_HOSTS"
+    else
+        write_conf ";  hosts allow = 127. 10. 172.16. 192.168."
+    fi
 
-	
-# Configure VFS objects
+    local encrypt="${GLOBAL_ENCRYPT:-auto}"
+    encrypt="${encrypt,,}"
+    case "$encrypt" in
+        required|enable|enabled|yes|ok|y|mandatory|ya|1) encrypt="required" ;;
+        disable|d|off|no|n|0) encrypt="disabled" ;;
+        *) encrypt="auto" ;;
+    esac
+    GLOBAL_ENCRYPT="$encrypt"
+    write_conf "   server smb encrypt = $encrypt"
 
-SHARE_RECYCLE_BIN=$(echo "${!SHARE_RECYCLE_BIN}" | tr '[:upper:]' '[:lower:]')
-SHARE_BTRFS=$(echo "${!SHARE_BTRFS}" | tr '[:upper:]' '[:lower:]')
+    local disable_netbios netbios_port smb_port
+    disable_netbios=$(normalize_bool "${DISABLE_NETBIOS:-no}" "no")
+    netbios_port="${NETBIOS_PORT:-139}"
+    smb_port="${SMB_PORT:-445}"
+    
+    validate_numeric "$netbios_port" || netbios_port=139
+    validate_numeric "$smb_port" || smb_port=445
+    
+    write_conf "   disable netbios = $disable_netbios"
+    if [[ "$disable_netbios" == "yes" ]]; then
+        write_conf "   smb ports = $smb_port"
+    else
+        write_conf "   smb ports = $smb_port $netbios_port"
+    fi
 
-if [ -z "${SHARE_BTRFS}" ] || [ "${SHARE_BTRFS}" == 'disable' ] || [ "${SHARE_BTRFS}" == 'd' ] || [ "${SHARE_BTRFS}" == 'off' ] || [ "${SHARE_BTRFS}" == 'no' ] || [ "${SHARE_BTRFS}" == 'n' ]; then
-	BTRFS=""
-else
-	BTRFS="btrfs"
-fi
-if [ "${SHARE_RECYCLE_BIN}" == 'yes' ] || [ "${SHARE_RECYCLE_BIN}" == 'y' ] || [ "${SHARE_RECYCLE_BIN}" == 'ye' ] || [ "${SHARE_RECYCLE_BIN}" == 'ya' ] || [ "${SHARE_RECYCLE_BIN}" == 'true' ] || [ "${SHARE_RECYCLE_BIN}" == 't' ] || [ "${SHARE_RECYCLE_BIN}" == 'recycle' ]; then
-	RECYCLE="recycle"
-else
-	RECYCLE=""
-fi
+    local map_to_guest="${MAP_TO_GUEST:-}"
+    map_to_guest="${map_to_guest,,}"
+    case "$map_to_guest" in
+        "bad user"|baduser) write_conf "   map to guest = Bad User" ;;
+        "bad password"|badpassword) write_conf "   map to guest = Bad Password" ;;
+    esac
 
-echo "   vfs object = ${RECYCLE} ${BTRFS}" >> /etc/samba/smb.conf
+    if [[ -e "$GUEST_ACC" ]]; then
+        write_conf "   guest account = ${GUEST_ACCOUNT:-guest}"
+    fi
 
-# ENABLE/DISABLE RECYCLE-BIN
-			if [ "${RECYCLE}" == 'recycle' ]; then
-				echo "   recycle:repository = /data/${!SHARE_NAME}/.recycle/%U" >> /etc/samba/smb.conf
-				echo "   recycle:keeptree = yes" >> /etc/samba/smb.conf
-				echo "   recycle:versions = yes" >> /etc/samba/smb.conf
-				echo "   recycle:touch = yes" >> /etc/samba/smb.conf
-				echo "   recycle:touch_mtime = no" >> /etc/samba/smb.conf
-				if  [[ "${!RECYCLE_DIRECTORY_MODE}" =~ ^[0-9]+$ ]]; then
-					        echo "   recycle:directory_mode = ${!RECYCLE_DIRECTORY_MODE}" >> /etc/samba/smb.conf
-				else
-					        echo "   recycle:directory_mode = 0777" >> /etc/samba/smb.conf
-				fi
-				if [[ "${!RECYCLE_SUB_DIRECTORY_MODE}" =~ ^[0-9]+$ ]]; then
-					echo "   recycle:subdir_mode = ${!RECYCLE_SUB_DIRECTORY_MODE}" >> /etc/samba/smb.conf
-				else
-					echo "   recycle:subdir_mode = 0700" >> /etc/samba/smb.conf
-				fi
-				if [[ "${!RECYCLE_MAX_SIZE}" =~ ^[0-9]+$ ]]; then
-					echo "   recycle:maxsize = ${!RECYCLE_MAX_SIZE}" >> /etc/samba/smb.conf
-				else
-					:
-				fi
-				echo "   recycle:exclude = " >> /etc/samba/smb.conf
-				echo "   recycle:exclude_dir = .recycle" >> /etc/samba/smb.conf
-			else
-				:
-			fi
-	done
-fi
-echo ""  >> /etc/samba/smb.conf
-echo "#============================ CONFIGURATION FOR USER SHARES ENDS HERE ============================" >> /etc/samba/smb.conf
-echo "" >> /etc/samba/smb.conf
+    write_conf "   unix extensions = yes"
+    write_conf "   wide links = no"
+    write_conf "   create mask = 0777"
+    write_conf "   directory mask = 0777"
 
+    local macos_opts
+    macos_opts=$(normalize_bool "${ENABLE_MACOS_OPTS:-yes}" "yes")
+    
+    if [[ "$macos_opts" == "yes" ]]; then
+        BASE_VFS_MODULES="catia fruit streams_xattr"
+        write_conf "   # Special configuration for Apple's Time Machine & Performance"
+        write_conf "   fruit:aapl = yes"
+        write_conf "   fruit:copyfile = yes"
+        write_conf "   fruit:nfs_aces = no"
+        write_conf "   fruit:metadata = stream"
+        write_conf "   fruit:model = MacSamba"
+        write_conf "   fruit:posix_rename = yes"
+        write_conf "   fruit:veto_appledouble = no"
+        write_conf "   fruit:wipe_intentionally_left_blank_rfork = yes"
+        write_conf "   fruit:delete_empty_adfiles = yes"
+    else
+        BASE_VFS_MODULES=""
+    fi
+}
 
-# ENABLE/DISABLE TEMP SHARE
-TEMP_SHARE_ON=$(echo "${TEMP_SHARE_ON}" | tr '[:upper:]' '[:lower:]')
-if [ "${TEMP_SHARE_ON}" == 'yes' ] || [ "${TEMP_SHARE_ON}" == 'y' ] || [ "${TEMP_SHARE_ON}" == 'true' ] || [ "${TEMP_SHARE_ON}" == 't' ] || [ "${TEMP_SHARE_ON}" == 'ye' ]; then
-echo "#============================ CONFIGURATION FOR: TEMP SHARE (GROUND FOR PUBLIC DATA EXCHANGE) ============================" >> /etc/samba/smb.conf
-if [ -z "${TEMP_SHARE_NAME}" ]; then
-	TEMP_SHARE_NAME=temp-share
-else
-	:
-fi
-echo "[${TEMP_SHARE_NAME}]"  >> /etc/samba/smb.conf
-echo "   path = /data/${TEMP_SHARE_NAME}"  >> /etc/samba/smb.conf
-			if [ -z "${TEMP_SHARE_COMMENT}" ]; then
-				:
-			else
-				echo "   comment = ${TEMP_SHARE_COMMENT}" >> /etc/samba/smb.conf
-			fi
+enable_guest_account() {
+    [[ -e "$GUEST_ACC" ]] || touch "$GUEST_ACC"
+}
 
-# CONFIGURE TEMP SHARE READ-ONLY
-if [ -z "${TEMP_SHARE_READ_ONLY}" ]; then
-	TEMP_SHARE_READ_ONLY=no
-else
-	:
-fi
-TEMP_SHARE_READ_ONLY=$(echo "${TEMP_SHARE_READ_ONLY}" | tr '[:upper:]' '[:lower:]')
-if [ "${TEMP_SHARE_READ_ONLY}" == 'yes' ] || [ "${TEMP_SHARE_READ_ONLY}" == 'y' ] || [ "${TEMP_SHARE_READ_ONLY}" == 'true' ] || [ "${TEMP_SHARE_READ_ONLY}" == 't' ] || [ "${TEMP_SHARE_READ_ONLY}" == 'ye' ] || [ "${TEMP_SHARE_WRITABLE}" == 'no' ] || [ "${TEMP_SHARE_WRITABLE}" == 'n' ] || [ "${TEMP_SHARE_WRITABLE}" == 'false' ] || [ "${TEMP_SHARE_WRITABLE}" == 'f' ]; then			
-	TEMP_SHARE_READ_ONLY=yes
-	echo "   read only = ${TEMP_SHARE_READ_ONLY}"  >> /etc/samba/smb.conf
-else 
-	TEMP_SHARE_READ_ONLY=no
-	echo "   read only = ${TEMP_SHARE_READ_ONLY}"  >> /etc/samba/smb.conf
-fi
+configure_share() {
+    local i=$1
+    local share_name_var="SHARE_NAME_$i"
+    local share_name="${!share_name_var:-}"
 
-# CONFIGURE TEMP SHARE PUBLIC
-if [ -z "${TEMP_SHARE_PUBLIC}" ]; then
-	TEMP_SHARE_PUBLIC=yes
-else
-	:
-fi
-TEMP_SHARE_PUBLIC=$(echo "${TEMP_SHARE_PUBLIC}" | tr '[:upper:]' '[:lower:]')
-if [ "${TEMP_SHARE_PUBLIC}" == 'no' ] || [ "${TEMP_SHARE_PUBLIC}" == 'n' ] || [ "${TEMP_SHARE_PUBLIC}" == 'false' ] || [ "${TEMP_SHARE_PUBLIC}" == 'f' ] || [ "${TEMP_SHARE_GUEST_OK}" == 'no' ] || [ "${TEMP_SHARE_GUEST_OK}" == 'n' ] || [ "${TEMP_SHARE_GUEST_OK}" == 'false' ] || [ "${TEMP_SHARE_GUEST_OK}" == 'f' ]; then			
-        TEMP_SHARE_PUBLIC=no
-        echo echo "   public = ${TEMP_SHARE_PUBLIC}"  >> /etc/samba/smb.conf
-else
-        TEMP_SHARE_PUBLIC=yes
-        echo "   public = ${TEMP_SHARE_PUBLIC}"  >> /etc/samba/smb.conf
-fi
+    if [[ -z "$share_name" ]]; then
+        log_error "SHARE_NAME_$i is not set"
+        return 1
+    fi
 
-# ENABLE/DISABLE TEM SHARE RECYCLE-BIN
-	TEMP_RECYCLE_BIN=$(echo "${TEMP_RECYCLE_BIN}" | tr '[:upper:]' '[:lower:]')
-			if [ "${TEMP_RECYCLE_BIN}" == 'yes' ] || [ "${TEMP_RECYCLE_BIN}" == 'y' ] || [ "${TEMP_RECYCLE_BIN}" == 'ye' ] || [ "${TEMP_RECYCLE_BIN}" == 'ya' ] || [ "${TEMP_RECYCLE_BIN}" == 'true' ] || [ "${TEMP_RECYCLE_BIN}" == 't' ]; then
-				echo "   vfs object = recycle" >> /etc/samba/smb.conf
-				echo "   recycle:repository = /data/${TEMP_SHARE_NAME}/.recycle/%U" >> /etc/samba/smb.conf
-				echo "   recycle:keeptree = yes" >> /etc/samba/smb.conf
-				echo "   recycle:versions = yes" >> /etc/samba/smb.conf
-				echo "   recycle:touch = yes" >> /etc/samba/smb.conf
-				echo "   recycle:touch_mtime = no" >> /etc/samba/smb.conf
-				if  [[ "${TEMP_RECYCLE_DIRECTORY_MODE}" =~ ^[0-9]+$ ]]; then
-					echo "   recycle:directory_mode = ${TEMP_RECYCLE_DIRECTORY_MODE}" >> /etc/samba/smb.conf
-				else
-					echo "   recycle:directory_mode = 0777" >> /etc/samba/smb.conf
-				fi
-				if [[ "${TEMP_RECYCLE_SUB_DIRECTORY_MODE}" =~ ^[0-9]+$ ]]; then
-					echo "   recycle:subdir_mode = ${TEMP_RECYCLE_SUB_DIRECTORY_MODE}" >> /etc/samba/smb.conf
-				else
-					echo "   recycle:subdir_mode = 0700" >> /etc/samba/smb.conf
-				fi
-				if [[ "${TEMP_RECYCLE_MAX_SIZE}" =~ ^[0-9]+$ ]]; then
-					echo "   recycle:maxsize = ${TEMP_RECYCLE_MAX_SIZE}" >> /etc/samba/smb.conf
-				else
-					:
-				fi
-				echo "   recycle:exclude = " >> /etc/samba/smb.conf
-				echo "   recycle:exclude_dir = .recycle" >> /etc/samba/smb.conf
-			else
-				:
-			fi
+    write_conf ""
+    write_conf "#============================ CONFIGURATION FOR USER SHARE: [$share_name] ============================"
+    write_conf "[$share_name]"
 
-echo ""  >> /etc/samba/smb.conf
-echo "#============================ CONFIGURATION FOR TEMP SHARE ENDS HERE ============================" >> /etc/samba/smb.conf
-fi
-echo "#============================ CONFIGURATION FOR NAS ENDS HERE ============================" >> /etc/samba/smb.conf
-exit 0
+    local comment_var="SHARE_${i}_COMMENT"
+    [[ -n "${!comment_var:-}" ]] && write_conf "   comment = ${!comment_var}"
+
+    write_conf "   path = $DATA_DIR/$share_name"
+
+    if [[ "${GLOBAL_ENCRYPT:-auto}" == "auto" ]]; then
+        local encrypt_var="SHARE_${i}_ENCRYPT"
+        local share_encrypt="${!encrypt_var:-auto}"
+        share_encrypt="${share_encrypt,,}"
+        case "$share_encrypt" in
+            required|require|mandatory|enabled|enable|yes|ok|y|ya|1) share_encrypt="required" ;;
+            disable|d|off|no|n|disabled|0) share_encrypt="disabled" ;;
+            *) share_encrypt="auto" ;;
+        esac
+        write_conf "   server smb encrypt = $share_encrypt"
+    fi
+
+    local ea_var="SHARE_${i}_ENABLE_EXTENDED_ATTRIBUTE"
+    local ea
+    ea=$(normalize_bool "${!ea_var:-yes}" "yes")
+    write_conf "   ea support = $ea"
+
+    local dos_var="SHARE_${i}_ENABLE_DOS_ATTRIBUTE"
+    local dos_attr
+    dos_attr=$(normalize_bool "${!dos_var:-yes}" "yes")
+    write_conf "   store dos attributes = $dos_attr"
+
+    local valid_users_var="SHARE_${i}_VALID_USERS"
+    [[ -n "${!valid_users_var:-}" ]] && write_conf "   valid users = ${!valid_users_var}"
+
+    local guest_ok_var="SHARE_${i}_GUEST_OK"
+    local public_var="SHARE_${i}_PUBLIC"
+    local guest_ok
+    guest_ok=$(normalize_bool "${!guest_ok_var:-no}" "no")
+    local public
+    public=$(normalize_bool "${!public_var:-no}" "no")
+
+    if [[ "$guest_ok" == "yes" ]]; then
+        public="yes"
+        enable_guest_account
+    fi
+    write_conf "   public = $public"
+
+    local guest_only_var="SHARE_${i}_GUEST_ONLY"
+    local guest_only
+    guest_only=$(normalize_bool "${!guest_only_var:-no}" "no")
+    
+    if [[ "$guest_only" == "yes" && -z "${!valid_users_var:-}" ]]; then
+        enable_guest_account
+    else
+        guest_only="no"
+    fi
+    write_conf "   guest only = $guest_only"
+
+    local browseable_var="SHARE_${i}_BROWSEABLE"
+    local browseable
+    browseable=$(normalize_bool "${!browseable_var:-yes}" "yes")
+    write_conf "   browseable = $browseable"
+
+    local read_only_var="SHARE_${i}_READ_ONLY"
+    local writeable_var="SHARE_${i}_WRITEABLE"
+    local read_only writeable
+    read_only=$(normalize_bool "${!read_only_var:-yes}" "yes")
+    writeable=$(normalize_bool "${!writeable_var:-no}" "no")
+
+    if [[ "$read_only" == "no" || "$writeable" == "yes" ]]; then
+        writeable="yes"
+    else
+        writeable="no"
+    fi
+    write_conf "   writable = $writeable"
+
+    local read_list_var="SHARE_${i}_READ_LIST"
+    local write_list_var="SHARE_${i}_WRITE_LIST"
+    [[ -n "${!read_list_var:-}" ]] && write_conf "   read list = ${!read_list_var}"
+    [[ -n "${!write_list_var:-}" ]] && write_conf "   write list = ${!write_list_var}"
+
+    local create_mask_var="SHARE_${i}_CREATE_MASK"
+    local force_create_mask_var="SHARE_${i}_FORCE_CREATE_MASK"
+    local dir_mask_var="SHARE_${i}_DIRECTORY_MASK"
+    local force_dir_mask_var="SHARE_${i}_FORCE_DIRECTORY_MASK"
+
+    validate_numeric "${!create_mask_var:-}" && write_conf "   create mask = ${!create_mask_var}"
+    validate_numeric "${!force_create_mask_var:-}" && write_conf "   force create mask = ${!force_create_mask_var}"
+    validate_numeric "${!dir_mask_var:-}" && write_conf "   directory mask = ${!dir_mask_var}"
+    validate_numeric "${!force_dir_mask_var:-}" && write_conf "   force directory mask = ${!force_dir_mask_var}"
+
+    local force_user_var="SHARE_${i}_FORCE_USER"
+    local force_group_var="SHARE_${i}_FORCE_GROUP"
+    [[ -n "${!force_user_var:-}" ]] && write_conf "   force user = ${!force_user_var}"
+    [[ -n "${!force_group_var:-}" ]] && write_conf "   force group = ${!force_group_var}"
+
+    local recycle_var="SHARE_${i}_RECYCLE_BIN"
+    local btrfs_var="SHARE_${i}_IS_BTRFS"
+    local recycle btrfs vfs_modules
+    
+    recycle=$(normalize_bool "${!recycle_var:-no}" "no")
+    btrfs=$(normalize_bool "${!btrfs_var:-no}" "no")
+    
+    vfs_modules="${BASE_VFS_MODULES:-}"
+    [[ "$recycle" == "yes" ]] && vfs_modules="$vfs_modules recycle"
+    [[ "$btrfs" == "yes" ]] && vfs_modules="$vfs_modules btrfs"
+    
+    write_conf "   vfs objects = $vfs_modules"
+
+    if [[ "$recycle" == "yes" ]]; then
+        local recycle_max_var="SHARE_${i}_RECYCLE_MAX_SIZE"
+        local recycle_dir_mode_var="SHARE_${i}_RECYCLE_DIRECTORY_MODE"
+        local recycle_subdir_mode_var="SHARE_${i}_RECYCLE_SUB_DIRECTORY_MODE"
+
+        write_conf "   recycle:repository = $DATA_DIR/$share_name/.recycle/%U"
+        write_conf "   recycle:keeptree = yes"
+        write_conf "   recycle:versions = yes"
+        write_conf "   recycle:touch = yes"
+        write_conf "   recycle:touch_mtime = no"
+        
+        if validate_numeric "${!recycle_dir_mode_var:-}"; then
+            write_conf "   recycle:directory_mode = ${!recycle_dir_mode_var}"
+        else
+            write_conf "   recycle:directory_mode = 0777"
+        fi
+        
+        if validate_numeric "${!recycle_subdir_mode_var:-}"; then
+            write_conf "   recycle:subdir_mode = ${!recycle_subdir_mode_var}"
+        else
+            write_conf "   recycle:subdir_mode = 0700"
+        fi
+        
+        validate_numeric "${!recycle_max_var:-}" && write_conf "   recycle:maxsize = ${!recycle_max_var}"
+        
+        write_conf "   recycle:exclude = "
+        write_conf "   recycle:exclude_dir = .recycle"
+    fi
+}
+
+configure_temp_share() {
+    local temp_on
+    temp_on=$(normalize_bool "${TEMP_SHARE_ON:-no}" "no")
+    
+    [[ "$temp_on" != "yes" ]] && return
+
+    local temp_name="${TEMP_SHARE_NAME:-temp-share}"
+
+    write_conf ""
+    write_conf "#============================ CONFIGURATION FOR: TEMP SHARE (GROUND FOR PUBLIC DATA EXCHANGE) ============================"
+    write_conf "[$temp_name]"
+    write_conf "   path = $DATA_DIR/$temp_name"
+    
+    [[ -n "${TEMP_SHARE_COMMENT:-}" ]] && write_conf "   comment = ${TEMP_SHARE_COMMENT}"
+
+    local read_only
+    read_only=$(normalize_bool "${TEMP_SHARE_READ_ONLY:-no}" "no")
+    write_conf "   read only = $read_only"
+
+    local public
+    public=$(normalize_bool "${TEMP_SHARE_PUBLIC:-yes}" "yes")
+    write_conf "   public = $public"
+
+    local recycle
+    recycle=$(normalize_bool "${TEMP_RECYCLE_BIN:-no}" "no")
+    
+    local vfs_modules="${BASE_VFS_MODULES:-}"
+    [[ "$recycle" == "yes" ]] && vfs_modules="$vfs_modules recycle"
+    
+    write_conf "   vfs objects = $vfs_modules"
+
+    if [[ "$recycle" == "yes" ]]; then
+        write_conf "   recycle:repository = $DATA_DIR/$temp_name/.recycle/%U"
+        write_conf "   recycle:keeptree = yes"
+        write_conf "   recycle:versions = yes"
+        write_conf "   recycle:touch = yes"
+        write_conf "   recycle:touch_mtime = no"
+        
+        if validate_numeric "${TEMP_RECYCLE_DIRECTORY_MODE:-}"; then
+            write_conf "   recycle:directory_mode = ${TEMP_RECYCLE_DIRECTORY_MODE}"
+        else
+            write_conf "   recycle:directory_mode = 0777"
+        fi
+        
+        if validate_numeric "${TEMP_RECYCLE_SUB_DIRECTORY_MODE:-}"; then
+            write_conf "   recycle:subdir_mode = ${TEMP_RECYCLE_SUB_DIRECTORY_MODE}"
+        else
+            write_conf "   recycle:subdir_mode = 0700"
+        fi
+        
+        validate_numeric "${TEMP_RECYCLE_MAX_SIZE:-}" && write_conf "   recycle:maxsize = ${TEMP_RECYCLE_MAX_SIZE}"
+        
+        write_conf "   recycle:exclude = "
+        write_conf "   recycle:exclude_dir = .recycle"
+    fi
+
+    write_conf ""
+    write_conf "#============================ CONFIGURATION FOR TEMP SHARE ENDS HERE ============================"
+}
+
+main() {
+    create_share_directories
+    global_config
+
+    write_conf ""
+    write_conf "#============================ CONFIGURATION FOR NAS STARTS HERE ============================"
+    write_conf ""
+    write_conf "#============================ SHARE DEFINITIONS =============================="
+
+    local share_indices
+    share_indices=$(get_share_indices)
+    
+    if [[ -n "$share_indices" ]]; then
+        while IFS= read -r i; do
+            configure_share "$i" || continue
+        done <<< "$share_indices"
+    fi
+
+    write_conf ""
+    write_conf "#============================ CONFIGURATION FOR USER SHARES ENDS HERE ============================"
+
+    configure_temp_share
+
+    write_conf "#============================ CONFIGURATION FOR NAS ENDS HERE ============================"
+}
+
+main

@@ -2,7 +2,7 @@
 
 # Define variables
 DOCKERFILE_NAME="./Dockerfile.samba-server-alpine"
-STABLE_ALPINE_VERSION="latest" 
+ALPINE_VERSION=$(cat ./build_data/base-image)
 BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # --- Step 1: Find the actual Samba version using a temporary container or local apk ---
@@ -15,7 +15,7 @@ BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # The safest syntax fix: keep it as a single, valid shell command for RUN
 cat <<EOF > "${DOCKERFILE_NAME}"
 # Use Alpine Linux - Using a stable version for reliability
-FROM alpine:${STABLE_ALPINE_VERSION}
+FROM alpine:${ALPINE_VERSION}
 
 # 1. Define an ARG to hold the version, which will be set dynamically below
 ARG SAMBA_VERSION="unknown"
