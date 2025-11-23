@@ -36,10 +36,17 @@ create_user() {
     printf '%s\n%s\n' "$user_pass" "$user_pass" | smbpasswd -a "$user_name" || exit_error "Failed to set Samba password for $user_name"
 }
 
+get_user_indices() {
+    compgen -v USER_NAME_ 2>/dev/null | sed 's/USER_NAME_//' | sort -n || true
+}
+
 validate_and_create_users() {
-    local i=1
+    local user_indices
+    user_indices=$(get_user_indices)
     
-    while true; do
+    [[ -z "$user_indices" ]] && return
+    
+    while IFS= read -r i; do
         local user_name_var="USER_NAME_${i}"
         local user_pass_var="USER_PASS_${i}"
         local user_uid_var="USER_${i}_UID"
@@ -48,11 +55,9 @@ validate_and_create_users() {
         local user_name="${!user_name_var:-}"
         local user_pass="${!user_pass_var:-}"
 
-        [[ -z "$user_name" ]] && break
+        [[ -z "$user_name" || -z "$user_pass" ]] && exit_error "Missing USER_NAME_${i} or USER_PASS_${i}."
 
-        [[ -z "$user_pass" ]] && exit_error "Missing USER_PASS_${i}."
-
-        user_exists "$user_name" && { ((i++)); continue; }
+        user_exists "$user_name" && continue
 
         local user_uid="${!user_uid_var:-}"
         local user_gid="${!user_gid_var:-}"
@@ -80,8 +85,7 @@ validate_and_create_users() {
         esac
 
         create_user "$user_name" "$user_pass" "$user_uid" "$user_gid"
-        ((i++))
-    done
+    done <<< "$user_indices"
 }
 
 create_guest_user() {
