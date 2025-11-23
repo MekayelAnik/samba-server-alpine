@@ -37,15 +37,9 @@ create_user() {
 }
 
 validate_and_create_users() {
-    local num_users="${NUMBER_OF_USERS:-0}"
+    local i=1
     
-    [[ $num_users -lt 1 ]] && return 0
-    
-    if ! is_valid_id "$num_users"; then
-        exit_error "NUMBER_OF_USERS must be a positive integer, got: $num_users"
-    fi
-
-    for ((i = 1; i <= num_users; i++)); do
+    while true; do
         local user_name_var="USER_NAME_${i}"
         local user_pass_var="USER_PASS_${i}"
         local user_uid_var="USER_${i}_UID"
@@ -54,9 +48,11 @@ validate_and_create_users() {
         local user_name="${!user_name_var:-}"
         local user_pass="${!user_pass_var:-}"
 
-        [[ -z "$user_name" || -z "$user_pass" ]] && exit_error "Missing USER_NAME_${i} or USER_PASS_${i}. Set all required variables for $num_users users."
+        [[ -z "$user_name" ]] && break
 
-        user_exists "$user_name" && continue
+        [[ -z "$user_pass" ]] && exit_error "Missing USER_PASS_${i}."
+
+        user_exists "$user_name" && { ((i++)); continue; }
 
         local user_uid="${!user_uid_var:-}"
         local user_gid="${!user_gid_var:-}"
@@ -84,6 +80,7 @@ validate_and_create_users() {
         esac
 
         create_user "$user_name" "$user_pass" "$user_uid" "$user_gid"
+        ((i++))
     done
 }
 
