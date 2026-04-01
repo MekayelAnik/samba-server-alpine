@@ -22,7 +22,7 @@ ARG SAMBA_VERSION="unknown"
 
 # Set environment variables for non-interactive installs and timezone
 ENV TZ="${TZ:-Asia/Dhaka}" \
-    PACKAGES="samba tzdata bash"
+    PACKAGES="samba samba-common-tools tzdata bash shadow"
 
 # --- CORE OPTIMIZATION: Get Package Version and Install in a single layer ---
 # FIX: All shell commands are put on a single line, separated by '&&', 
@@ -34,7 +34,7 @@ LABEL org.opencontainers.image.created="${BUILD_DATE}" \
     org.opencontainers.image.version="\${SAMBA_VERSION}" \
     org.opencontainers.image.authors="MD. MEKAYEL ANIK <mekayel.anik@gmail.com>" \
     org.opencontainers.image.source="https://github.com/MekayelAnik/samba-server-alpine" \
-    org.opencontainers.image.licenses="GPL-3.0" \
+    org.opencontainers.image.licenses="GPL-3.0"
 
 # Add local resources AFTER package installation to prevent cache invalidation
 ADD --chmod=555 ./resources  /usr/bin
