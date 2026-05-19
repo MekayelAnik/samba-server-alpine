@@ -18,7 +18,7 @@
     <tr>
       <td>Samba</td>
       <td><a href="https://pkgs.alpinelinux.org/package/edge/main/x86/samba">Alpine edge/main</a></td>
-      <td><code>4.22.6-r2</code></td>
+      <td><code>4.23.7-r0</code></td>
     </tr>
     <tr>
       <td>Alpine Base</td>
