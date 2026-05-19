@@ -422,7 +422,7 @@ jobs:
               linux/arm64)    echo "-arm" ;;
               linux/arm/v7)   echo "-arm" ;;
               linux/arm/v6)   echo "-arm" ;;
-              linux/riscv64)  echo "-riscv" ;;
+              linux/riscv64)  echo "" ;;
               *)              echo "" ;;
             esac
           }
@@ -482,7 +482,7 @@ jobs:
         uses: ./.github/actions/setup-build-env
         with:
           do_checkout: 'false'
-          setup_qemu: ${{ matrix.platform_slug != 'amd64' && matrix.platform_slug != '386' && matrix.platform_slug != 'arm64' && matrix.platform_slug != 'arm-v7' && matrix.platform_slug != 'arm-v6' && matrix.platform_slug != 'riscv64' && 'true' || 'false' }}
+          setup_qemu: ${{ matrix.platform_slug != 'amd64' && matrix.platform_slug != '386' && matrix.platform_slug != 'arm64' && matrix.platform_slug != 'arm-v7' && matrix.platform_slug != 'arm-v6' && 'true' || 'false' }}
           setup_buildx: 'true'
           login_dockerhub: 'true'
           login_ghcr: 'true'
