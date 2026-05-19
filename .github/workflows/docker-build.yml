@@ -726,7 +726,7 @@ jobs:
       - name: Run Trivy security scan
         if: steps.check-digests.outputs.has_digests == 'true' && (github.event.inputs.run_security_scan || 'true') == 'true'
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: '${{ env.DOCKERHUB_REPO }}:${{ steps.tags.outputs.version_tag }}'
           format: 'sarif'
