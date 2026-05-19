@@ -4,6 +4,31 @@
 <img alt="SAMBA" src="https://www.samba.org/samba/style/2010/grey/headerPrint.jpg">
 <p>This is an unofficial multi-aarch docker image of SAMBA created for multiplatform support.This image creates a local SAMBA server to ficilitate client-side data transfer. Official Website: <a href="https://www.samba.org/" rel="nofollow noopener">https://www.samba.org/</a>
 </p>
+<!-- COMPONENT_VERSIONS_START -->
+<h2>Component Versions</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Component</th>
+      <th>Source</th>
+      <th>Current Version</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Samba</td>
+      <td><a href="https://pkgs.alpinelinux.org/package/edge/main/x86/samba">Alpine edge/main</a></td>
+      <td><code>4.22.6-r2</code></td>
+    </tr>
+    <tr>
+      <td>Alpine Base</td>
+      <td><a href="https://hub.docker.com/_/alpine">alpine:edge</a></td>
+      <td><code>edge</code></td>
+    </tr>
+  </tbody>
+</table>
+<!-- COMPONENT_VERSIONS_END -->
+
 <h2>The architectures supported by this image are:</h2>
 <table>
   <thead>
