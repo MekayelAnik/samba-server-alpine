@@ -102,8 +102,7 @@ env:
   DOCKERHUB_REPO: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/samba-server-alpine' }}
   GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/samba-server-alpine', github.repository_owner) }}
   DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64,linux/ppc64le,linux/s390x' }}
-  ALPINE_BASE: ${{ vars.ALPINE_BASE || 'edge' }}
-  DEFAULT_BASE_IMAGE: ${{ vars.DEFAULT_BASE_IMAGE || format('alpine:{0}', vars.ALPINE_BASE || 'edge') }}
+  DEFAULT_BASE_IMAGE: ${{ vars.DEFAULT_BASE_IMAGE || 'alpine:edge' }}
 
 jobs:
   # ===========================================================================
@@ -216,7 +215,8 @@ jobs:
             "https://uk.alpinelinux.org/alpine" \
             "https://ftp.halifax.rwth-aachen.de/alpine"; do
 
-            APKINDEX_URL="${mirror}/${ALPINE_BASE}/main/x86_64/APKINDEX.tar.gz"
+            ALPINE_BRANCH="${DEFAULT_BASE_IMAGE#*:}"
+            APKINDEX_URL="${mirror}/${ALPINE_BRANCH}/main/x86_64/APKINDEX.tar.gz"
             echo "Trying APKINDEX from: $APKINDEX_URL"
 
             SAMBA_VERSION=$(curl -fsSL --connect-timeout 10 --max-time 30 "$APKINDEX_URL" 2>/dev/null \
@@ -233,7 +233,7 @@ jobs:
           # Strategy 2: Fallback — run Alpine container to query apk
           if [[ -z "$SAMBA_VERSION" ]]; then
             echo "APKINDEX parsing failed, falling back to Alpine container query..."
-            SAMBA_VERSION=$(docker run --rm "alpine:${ALPINE_BASE}" sh -c \
+            SAMBA_VERSION=$(docker run --rm "${DEFAULT_BASE_IMAGE}" sh -c \
               "apk update >/dev/null 2>&1 && apk info samba 2>/dev/null | head -1 | sed 's/^samba-//'" || true)
           fi
 
@@ -522,7 +522,7 @@ jobs:
           set -euo pipefail
 
           mkdir -p build_data
-          echo "${ALPINE_BASE}" > build_data/base-image
+          echo "${DEFAULT_BASE_IMAGE#*:}" > build_data/base-image
 
           bash ./DockerfileModifier.sh
 
