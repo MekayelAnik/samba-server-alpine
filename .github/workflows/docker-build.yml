@@ -103,6 +103,7 @@ env:
   GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/samba-server-alpine', github.repository_owner) }}
   DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6,linux/riscv64,linux/ppc64le,linux/s390x' }}
   ALPINE_BASE: ${{ vars.ALPINE_BASE || 'edge' }}
+  DEFAULT_BASE_IMAGE: ${{ vars.DEFAULT_BASE_IMAGE || format('alpine:{0}', vars.ALPINE_BASE || 'edge') }}
 
 jobs:
   # ===========================================================================
@@ -541,7 +542,7 @@ jobs:
         id: base-digest
         if: steps.check-tag.outputs.skip_build != 'true'
         run: |
-          BASE="alpine:${ALPINE_BASE}"
+          BASE="${DEFAULT_BASE_IMAGE}"
           DIGEST=$(crane digest "$BASE" 2>/dev/null || echo "unknown")
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
