@@ -422,7 +422,7 @@ jobs:
               linux/arm64)    echo "-arm" ;;
               linux/arm/v7)   echo "-arm" ;;
               linux/arm/v6)   echo "-arm" ;;
-              linux/riscv64)  echo "" ;;
+              linux/riscv64)  echo "-arm" ;;
               *)              echo "" ;;
             esac
           }
