@@ -106,42 +106,10 @@ env:
 
 jobs:
   # ===========================================================================
-  # Job 0: Quick upstream check
-  # ===========================================================================
-  quick-check:
-    name: Quick Check
-    runs-on: ${{ vars.ACTION_RUNNER_VERSION || 'ubuntu-latest' }}
-    outputs:
-      should_continue: ${{ steps.gate.outputs.should_continue }}
-    steps:
-      - name: Determine if full check needed
-        id: gate
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          ACTION: ${{ github.event.inputs.action || 'auto-check' }}
-          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
-        run: |
-          set -euo pipefail
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$ACTION" != "auto-check" ]]; then
-            echo "Manual action '$ACTION' — always continue"
-            echo "should_continue=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [[ "$FORCE_BUILD" == "true" ]]; then
-            echo "Force build — always continue"
-            echo "should_continue=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "Auto-check — will compare upstream versions against state"
-          echo "should_continue=true" >> "$GITHUB_OUTPUT"
-
-  # ===========================================================================
   # Job 1: Check upstream releases
   # ===========================================================================
   check-releases:
     name: Check Alpine Samba Version
-    needs: quick-check
-    if: needs.quick-check.outputs.should_continue == 'true'
     runs-on: ${{ vars.ACTION_RUNNER_VERSION || 'ubuntu-latest' }}
     permissions:
       contents: read
@@ -179,27 +147,8 @@ jobs:
           LEVEL="${{ github.event.inputs.compression_level || '22' }}"
           echo "level=$LEVEL" >> "$GITHUB_OUTPUT"
 
-      - name: Install dependencies
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list 2>/dev/null || true
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq jq skopeo > /dev/null 2>&1
-
       - name: Checkout
         uses: actions/checkout@v6
-
-      - name: Setup build environment
-        uses: ./.github/actions/setup-build-env
-        with:
-          do_checkout: 'false'
-          setup_qemu: 'false'
-          setup_buildx: 'false'
-          login_dockerhub: 'true'
-          login_ghcr: 'true'
-          dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
-          ghcr_actor: ${{ github.actor }}
-          ghcr_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Fetch samba version from Alpine APKINDEX
         id: fetch-samba
@@ -301,8 +250,8 @@ jobs:
               elif [[ "$TAG_AS_LATEST" == "true" && -n "$SAMBA_VERSION" ]]; then
                 IMAGE_TAG="${SAMBA_VERSION}"
                 GHCR_PREFIX="${{ env.GHCR_REPO }}"
-                VERSION_DIGEST=$(crane digest "${GHCR_PREFIX}:${IMAGE_TAG}" 2>/dev/null || echo "none")
-                LATEST_DIGEST=$(crane digest "${GHCR_PREFIX}:latest" 2>/dev/null || echo "missing")
+                VERSION_DIGEST=$(skopeo inspect --no-tags "docker://${GHCR_PREFIX}:${IMAGE_TAG}" 2>/dev/null | jq -r '.Digest // "none"' || echo "none")
+                LATEST_DIGEST=$(skopeo inspect --no-tags "docker://${GHCR_PREFIX}:latest" 2>/dev/null | jq -r '.Digest // "missing"' || echo "missing")
                 if [[ "$VERSION_DIGEST" != "none" && "$VERSION_DIGEST" != "$LATEST_DIGEST" ]]; then
                   LATEST_NEEDS_PROMOTE="true"
                 fi
@@ -382,7 +331,7 @@ jobs:
             exit 0
           fi
 
-          DIGEST=$(crane digest "${{ env.GHCR_REPO }}:${IMAGE_TAG}" 2>/dev/null || echo "")
+          DIGEST=$(skopeo inspect --no-tags "docker://${{ env.GHCR_REPO }}:${IMAGE_TAG}" 2>/dev/null | jq -r '.Digest // empty' || echo "")
           if [[ -n "$DIGEST" ]]; then
             echo "::warning::Tag ${IMAGE_TAG} already exists in GHCR (digest: $DIGEST)"
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -785,10 +734,7 @@ jobs:
       && needs.check-releases.result == 'success'
       && (
         needs.check-releases.outputs.action_type == 'sync-registries'
-        || (
-          needs.check-releases.outputs.action_type == 'auto-check'
-          && (needs.merge-manifest.result == 'success' || needs.check-releases.outputs.should_build != 'true')
-        )
+        || needs.merge-manifest.result == 'success'
       )
     runs-on: ${{ vars.ACTION_RUNNER_VERSION || 'ubuntu-latest' }}
     permissions:
