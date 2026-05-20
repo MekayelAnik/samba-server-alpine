@@ -1,1118 +1,823 @@
 #!/bin/bash
-# constructConf.sh - Comprehensive Samba configuration with all critical parameters
+# constructConf.sh - Samba Configuration Generator (v3.5.5)
+# Optimized for multi-client access (Android/Windows/macOS/Linux)
+# 
+# CRITICAL MULTI-CLIENT NOTES:
+# - Oplocks DISABLED by default - prevents file locking issues
+# - SMB2 leases DISABLED by default - prevents client-side caching locks
+# - Kernel share modes DISABLED - prevents browsing from locking files
 set -euo pipefail
 IFS=$'\n\t'
-LC_ALL=C
-
-# Script metadata (conditional to avoid conflicts when sourced)
-if [[ -z "${CONSTRUCT_CONF_SCRIPT_NAME:-}" ]]; then
-    CONSTRUCT_CONF_SCRIPT_NAME="$(basename "$0")"
-    readonly CONSTRUCT_CONF_SCRIPT_NAME
-fi
-if [[ -z "${CONSTRUCT_CONF_SCRIPT_VERSION:-}" ]]; then
-    # CONSTRUCT_CONF_SCRIPT_VERSION format YYYY.MM.DD
-    readonly CONSTRUCT_CONF_SCRIPT_VERSION="2025.11.24"
-fi
-
-LOG_FILE="${LOG_FILE:-/var/log/nas-setup.log}"
-PROFILE_MODE="${PROFILE_MODE:-0}"
-
-readonly SMB_CONF="${SMB_CONF:-/etc/samba/smb.conf}"
-readonly GUEST_ACC="/etc/samba/guest.acc"
-readonly DATA_DIR="${DATA_DIR:-/data}"
-
-# Samba directory paths - with secure defaults
-readonly LOCK_DIR="${SAMBA_LOCK_DIR:-/var/lib/samba/locks}"
-readonly PID_DIR="${SAMBA_PID_DIR:-/var/run/samba}"
-readonly PRIVATE_DIR="${SAMBA_PRIVATE_DIR:-/var/lib/samba/private}"
-readonly STATE_DIR="${SAMBA_STATE_DIR:-/var/lib/samba}"
-readonly CACHE_DIR="${SAMBA_CACHE_DIR:-/var/cache/samba}"
-
-declare -A GROUP_CACHE=()
-declare -A PASSWD_CACHE=()
-declare -i PERF_START_TIME=0
-
-# === Numeric validation for IDs only ===
-validate_numeric() {
-    local value="$1"
-    
-    [[ -z "$value" ]] && return 1
-    value="${value##+(0)}"
-    [[ -z "$value" ]] && value="0"
-    
-    if [[ "$value" =~ ^[0-9]+$ ]]; then
-        echo "$value"
-        return 0
-    fi
-    return 1
-}
-
-# === Safe arithmetic wrapper ===
-safe_arithmetic() {
-    local var1="${1}"
-    local op="${2}"
-    local var2="${3}"
-    
-    var1=$(validate_numeric "$var1" 2>/dev/null) || var1="0"
-    var2=$(validate_numeric "$var2" 2>/dev/null) || var2="0"
-    
-    local result
-    case "$op" in
-        +) result=$((var1 + var2)) ;;
-        -) result=$((var1 - var2)) ;;
-        \*) result=$((var1 * var2)) ;;
-        /) result=$((var1 / var2)) ;;
-        %) result=$((var1 % var2)) ;;
-        *) return 1 ;;
-    esac
-    echo "$result"
-}
 
 # ============================================================================
-# COLOR PALETTE - Elegant Terminal Output (Conditional - avoid conflicts)
+# CONFIGURATION (conditional to avoid conflicts when sourced)
 # ============================================================================
+# Use unique variable name to avoid conflicts with parent scripts
+_CONF_SCRIPT_VERSION="3.5.5"
 
-# === Status Colors ===
-if [[ -z "${SUCCESS_GREEN:-}" ]]; then
-    readonly SUCCESS_GREEN='\033[38;5;10m'
-    readonly ERROR_RED='\033[38;5;9m'
-    readonly WARNING_YELLOW='\033[38;5;11m'
-    readonly INFO_CYAN='\033[38;5;14m'
+# Print version immediately on load
+echo "[i] === Samba Configuration v${_CONF_SCRIPT_VERSION} ==="
+
+# Only set if not already defined (allows parent script to override)
+[[ -z "${SMB_CONF:-}" ]] && SMB_CONF="/etc/samba/smb.conf"
+[[ -z "${GUEST_ACC:-}" ]] && GUEST_ACC="/etc/samba/guest.acc"
+[[ -z "${DATA_DIR:-}" ]] && DATA_DIR="/data"
+[[ -z "${LOG_FILE:-}" ]] && LOG_FILE="/var/log/nas-setup.log"
+
+# Samba directories (with defaults)
+[[ -z "${SAMBA_LOCK_DIR:-}" ]] && SAMBA_LOCK_DIR="/var/lib/samba/locks"
+[[ -z "${SAMBA_PID_DIR:-}" ]] && SAMBA_PID_DIR="/var/run/samba"
+[[ -z "${SAMBA_PRIVATE_DIR:-}" ]] && SAMBA_PRIVATE_DIR="/var/lib/samba/private"
+[[ -z "${SAMBA_STATE_DIR:-}" ]] && SAMBA_STATE_DIR="/var/lib/samba"
+[[ -z "${SAMBA_CACHE_DIR:-}" ]] && SAMBA_CACHE_DIR="/var/cache/samba"
+
+# Assign to local readonly aliases for use in this script
+_SMB_CONF="$SMB_CONF"
+_GUEST_ACC="$GUEST_ACC"
+_DATA_DIR="$DATA_DIR"
+_LOG_FILE="$LOG_FILE"
+_LOCK_DIR="$SAMBA_LOCK_DIR"
+_PID_DIR="$SAMBA_PID_DIR"
+_PRIVATE_DIR="$SAMBA_PRIVATE_DIR"
+_STATE_DIR="$SAMBA_STATE_DIR"
+_CACHE_DIR="$SAMBA_CACHE_DIR"
+
+# Caches for validation
+declare -A GROUP_CACHE=() 2>/dev/null || true
+declare -A PASSWD_CACHE=() 2>/dev/null || true
+
+# VFS modules base (set during global config)
+BASE_VFS_MODULES=""
+
+# ============================================================================
+# COLORS (conditional to avoid conflicts when sourced)
+# ============================================================================
+if [[ -z "${_CONF_COLORS_SET:-}" ]]; then
+    _RED='\033[38;5;9m'
+    _GREEN='\033[38;5;10m'
+    _YELLOW='\033[38;5;11m'
+    _CYAN='\033[38;5;14m'
+    _GRAY='\033[38;5;250m'
+    _NC='\033[0m'
+    _CONF_COLORS_SET=1
 fi
 
-# === Accent Colors ===
-if [[ -z "${ORANGE:-}" ]]; then
-    readonly ORANGE='\033[38;5;208m'
-    readonly LITE_GREEN='\033[38;5;10m'
-    readonly NAVY_BLUE='\033[38;5;18m'
-    readonly GREEN='\033[38;5;2m'
-    readonly SEA_GREEN='\033[38;5;74m'
-    readonly BLUE='\033[38;5;12m'
-    readonly ASH_GRAY='\033[38;5;250m'
-fi
+# ============================================================================
+# LOGGING (use unique function names to avoid conflicts)
+# ============================================================================
+_conf_log_info()  { printf "${_CYAN:-}[i]${_NC:-} %s\n" "$*" | tee -a "$_LOG_FILE"; }
+_conf_log_error() { printf "${_RED:-}[✗]${_NC:-} %s\n" "$*" >&2 | tee -a "$_LOG_FILE"; }
+_conf_log_warn()  { printf "${_YELLOW:-}[!]${_NC:-} %s\n" "$*" | tee -a "$_LOG_FILE"; }
+_conf_log_ok()    { printf "${_GREEN:-}[✓]${_NC:-} %s\n" "$*" | tee -a "$_LOG_FILE"; }
 
-# === Special Colors ===
-if [[ -z "${TEAL:-}" ]]; then
-    readonly TEAL='\033[38;5;45m'
-    readonly PINK='\033[38;5;213m'
-    readonly WHITE='\033[38;5;15m'
-    readonly DARK_GRAY='\033[38;5;240m'
-    readonly LIGHT_GRAY='\033[38;5;252m'
-fi
+_conf_error_exit() { _conf_log_error "$*"; exit 1; }
 
-# === Reset ===
-if [[ -z "${NC:-}" ]]; then
-    readonly NC='\033[0m'
-    readonly BOLD='\033[1m'
-fi
-
-# === Logging Functions ===
-log_info() {
-    printf "${INFO_CYAN}[%s] [i INFO]${NC} %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE"
-}
-
-log_error() {
-    printf "${ERROR_RED}[%s] [✗ ERROR]${NC} %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2 | tee -a "$LOG_FILE"
-}
-
-log_warn() {
-    printf "${WARNING_YELLOW}[%s] [! WARN]${NC} %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >&2 | tee -a "$LOG_FILE"
-}
-
-progress() {
-    printf "${SEA_GREEN}[%s] [> PROGRESS]${NC} %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE"
-}
-
-log_success() {
-    printf "${SUCCESS_GREEN}[%s] [✓ SUCCESS]${NC} %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE"
-}
-
-exit_error() {
-    log_error "$*"
-    exit 1
-}
-
-# === Utility Functions ===
-print_header() {
-    printf "\n${BOLD}${NAVY_BLUE}═══════════════════════════════════════════════════════════════════${NC}\n" | tee -a "$LOG_FILE"
-    printf "${BOLD}${NAVY_BLUE}   %s${NC}\n" "$*" | tee -a "$LOG_FILE"
-    printf "${BOLD}${NAVY_BLUE}═══════════════════════════════════════════════════════════════════${NC}\n\n" | tee -a "$LOG_FILE"
-}
-
-print_check() {
-    printf "  ${SUCCESS_GREEN}✓${NC} %s\n" "$*" | tee -a "$LOG_FILE"
-}
-
-cleanup() {
-    [[ $? -eq 0 ]] || log_error "Script terminated unexpectedly"
-}
-trap cleanup EXIT
-
-perf_start() {
-    PERF_START_TIME=$(date +%s%N 2>/dev/null || date +%s)
-}
-
-perf_mark() {
-    local name="$1"
-    local current_time
-    current_time=$(date +%s%N 2>/dev/null || date +%s)
-    
-    local elapsed
-    elapsed=$(safe_arithmetic "$current_time" "-" "$PERF_START_TIME" 2>/dev/null) || elapsed=0
-    
-    if [[ $elapsed -gt 1000000 ]]; then
-        elapsed=$((elapsed / 1000000))
-    else
-        elapsed=0
-    fi
-    
-    [[ "$PROFILE_MODE" == "1" ]] && progress "[PROFILE] $name: ${elapsed}ms"
-}
-
-normalize_bool() {
-    local val="${1,,}"
-    case "$val" in
-        yes|y|ye|true|t|1) echo "yes" ;;
+# ============================================================================
+# UTILITIES
+# ============================================================================
+_normalize_bool() {
+    case "${1,,}" in
+        yes|y|true|t|1) echo "yes" ;;
         no|n|false|f|0) echo "no" ;;
         *) echo "${2:-no}" ;;
     esac
 }
 
-load_group_cache() {
-    progress "Loading system group database..."
-    while IFS=: read -r group _ gid members; do
-        GROUP_CACHE[$group]="$gid|$members"
-    done < <(getent group)
-    log_info "Cached ${#GROUP_CACHE[@]} groups"
+_validate_numeric() {
+    local val="${1:-}"
+    val="${val##+(0)}"
+    [[ -z "$val" ]] && val="0"
+    [[ "$val" =~ ^[0-9]+$ ]] && echo "$val" && return 0
+    return 1
 }
 
-load_passwd_cache() {
-    progress "Loading system password database..."
-    while IFS=: read -r user _ uid _ _ _ _; do
-        PASSWD_CACHE[$user]=$uid
-    done < <(getent passwd)
-    log_info "Cached ${#PASSWD_CACHE[@]} users"
+_write_conf() {
+    printf '%s\n' "$1" >> "$_SMB_CONF"
 }
 
-gid_exists() {
-    [[ -n "${GROUP_CACHE[$1]:-}" ]]
-}
-
-uid_exists() {
-    [[ -n "${PASSWD_CACHE[$1]:-}" ]]
-}
-
-write_conf() {
-    printf '%s\n' "$1" >> "$SMB_CONF"
-}
-
-get_share_indices() {
+_get_share_indices() {
     compgen -v SHARE_NAME_ 2>/dev/null | sed 's/SHARE_NAME_//' | sort -n || true
 }
 
-validate_group_references() {
-    log_info "Validating group and user references in share configuration..."
+# ============================================================================
+# VALIDATION
+# ============================================================================
+_load_caches() {
+    GROUP_CACHE=()
+    PASSWD_CACHE=()
     
-    # Check if validation should be skipped
-    local skip_validation="${SKIP_USER_VALIDATION:-no}"
-    skip_validation=$(normalize_bool "$skip_validation" "no")
+    while IFS=: read -r group _ gid members; do
+        GROUP_CACHE[$group]="$gid|$members"
+    done < <(getent group 2>/dev/null || true)
     
-    if [[ "$skip_validation" == "yes" ]]; then
-        log_warn "User/group validation SKIPPED - ensure users are created before Samba starts"
-        return 0
-    fi
+    while IFS=: read -r user _ uid _ _ _ _; do
+        PASSWD_CACHE[$user]=$uid
+    done < <(getent passwd 2>/dev/null || true)
+}
+
+_validate_references() {
+    [[ "$(_normalize_bool "${SKIP_USER_VALIDATION:-no}" "no")" == "yes" ]] && return 0
     
-    progress "Loading system databases for validation..."
+    _conf_log_info "Validating user/group references..."
+    _load_caches
     
-    load_group_cache
-    load_passwd_cache
-    
-    local share_indices
-    share_indices=$(get_share_indices)
-    
-    [[ -z "$share_indices" ]] && { log_info "No shares to validate"; return 0; }
-    
-    local validation_count=0
+    local indices
+    indices=$(_get_share_indices)
+    [[ -z "$indices" ]] && return 0
     
     while IFS= read -r i; do
         local share_name_var="SHARE_NAME_$i"
         local share_name="${!share_name_var:-}"
-        
         [[ -z "$share_name" ]] && continue
         
         for ref_var in VALID_USERS READ_LIST WRITE_LIST; do
             local full_var="SHARE_${i}_${ref_var}"
             local value="${!full_var:-}"
-            
             [[ -z "$value" ]] && continue
             
-            # Use eval to properly split the value by spaces
-            eval "local -a tokens=($value)"
+            # Split on spaces (override IFS locally)
+            local -a tokens=()
+            IFS=' ' read -ra tokens <<< "$value"
             
-            local token
             for token in "${tokens[@]}"; do
                 [[ -z "$token" ]] && continue
-                
                 if [[ "$token" == @* ]]; then
                     local group="${token#@}"
-                    if ! gid_exists "$group"; then
-                        log_warn "Referenced group '@$group' does not exist - will be created or skipped at runtime"
-                    else
-                        progress "✓ Validated group reference: @$group"
-                        ((validation_count++))
-                    fi
+                    [[ -z "${GROUP_CACHE[$group]:-}" ]] && \
+                        _conf_log_warn "Group '@$group' not found"
                 else
-                    if ! uid_exists "$token"; then
-                        log_warn "Referenced user '$token' does not exist - will be created or skipped at runtime"
-                    else
-                        progress "✓ Validated user reference: $token"
-                        ((validation_count++))
-                    fi
+                    [[ -z "${PASSWD_CACHE[$token]:-}" ]] && \
+                        _conf_log_warn "User '$token' not found"
                 fi
             done
         done
-    done <<< "$share_indices"
-    
-    log_info "User/group validation complete ($validation_count valid references found)"
+    done <<< "$indices"
 }
 
-# === FEATURE 1 & 8: Directory Ownership & Shared Group Permissions ===
-setup_share_permissions() {
-    local share_path="$1"
-    local owner="$2"
-    local group="${3:-$owner}"
-    local permission_mode="${4:-2770}"
-    local recursive="${5:-no}"
+# ============================================================================
+# DIRECTORY SETUP
+# ============================================================================
+_setup_permissions() {
+    local path="$1" owner="$2" group="${3:-$2}" mode="${4:-2770}" recursive="${5:-no}"
     
-    # Verify owner exists
-    if ! id "$owner" >/dev/null 2>&1; then
-        log_warn "Owner '$owner' does not exist, skipping permission setup for $share_path"
-        return 0
+    id "$owner" >/dev/null 2>&1 || return 0
+    getent group "$group" >/dev/null 2>&1 || return 0
+    
+    local flags=""
+    [[ "$recursive" == "yes" ]] && flags="-R"
+    
+    chown $flags "$owner:$group" "$path" 2>/dev/null || true
+    chmod $flags "$mode" "$path" 2>/dev/null || true
+    
+    # Apply SGID to subdirectories if mode starts with 2
+    if [[ "$recursive" == "yes" && "$mode" =~ ^2 ]]; then
+        find "$path" -type d -exec chmod g+s {} \; 2>/dev/null || true
     fi
-    
-    # Verify group exists
-    if ! getent group "$group" >/dev/null 2>&1; then
-        log_warn "Group '$group' does not exist, skipping group assignment for $share_path"
-        return 0
-    fi
-    
-    # Set ownership (with optional recursion)
-    local chown_flags=""
-    [[ "$recursive" == "yes" ]] && chown_flags="-R"
-    
-    if chown $chown_flags "$owner:$group" "$share_path" 2>/dev/null; then
-        if [[ "$recursive" == "yes" ]]; then
-            log_info "✓ Set ownership (recursively): $owner:$group for $share_path"
-        else
-            log_info "✓ Set ownership: $owner:$group for $share_path"
-        fi
-    else
-        log_error "Failed to set ownership for $share_path"
-        return 1
-    fi
-    
-    # Set permissions (with optional recursion)
-    local chmod_flags=""
-    [[ "$recursive" == "yes" ]] && chmod_flags="-R"
-    
-    if chmod $chmod_flags "$permission_mode" "$share_path" 2>/dev/null; then
-        if [[ "$recursive" == "yes" ]]; then
-            log_info "✓ Set permissions (recursively): $permission_mode for $share_path"
-        else
-            log_info "✓ Set permissions: $permission_mode for $share_path"
-        fi
-        
-        # Check if SGID bit is set
-        if [[ "$permission_mode" =~ ^2 ]]; then
-            log_info "  > SGID bit enabled: new files will inherit group '$group'"
-        fi
-        
-        # If recursive and SGID, ensure all subdirectories have SGID too
-        if [[ "$recursive" == "yes" && "$permission_mode" =~ ^2 ]]; then
-            find "$share_path" -type d -exec chmod g+s {} \; 2>/dev/null
-            log_info "  > Applied SGID to all subdirectories"
-        fi
-    else
-        log_error "Failed to set permissions for $share_path"
-        return 1
-    fi
-    
-    return 0
 }
 
-create_share_directories() {
-    log_info "Creating share directories..."
+_create_directories() {
+    _conf_log_info "Creating share directories..."
     
-    local share_indices
-    share_indices=$(get_share_indices)
+    local indices dir_count=0
+    indices=$(_get_share_indices)
+    [[ -z "$indices" ]] && return 0
     
-    [[ -z "$share_indices" ]] && return 0
-    
-    local dir_count=0
-    
-    # Global recursive ownership setting (can be overridden per-share)
     local global_recursive
-    global_recursive=$(normalize_bool "${SHARE_RECURSIVE_OWNERSHIP:-no}" "no")
+    global_recursive=$(_normalize_bool "${SHARE_RECURSIVE_OWNERSHIP:-no}" "no")
     
     while IFS= read -r i; do
+        # FIXED: Define variable name BEFORE using indirect expansion
         local share_name_var="SHARE_NAME_$i"
         local share_name="${!share_name_var:-}"
-        
         [[ -z "$share_name" ]] && continue
         
-        local share_path="$DATA_DIR/$share_name"
+        local share_path="$_DATA_DIR/$share_name"
+        
+        # Create share directory
         if [[ ! -e "$share_path" ]]; then
             mkdir -p "$share_path"
-            progress "Created share directory: $share_path"
             ((dir_count++))
         fi
         
-        # Setup ownership and permissions
+        # Setup ownership
         local owner_var="SHARE_${i}_OWNER"
-        local group_var="SHARE_${i}_OWNER_GROUP"
-        local perms_var="SHARE_${i}_PERMISSION_MODE"
-        local recursive_var="SHARE_${i}_RECURSIVE_OWNERSHIP"
-        
         local owner="${!owner_var:-}"
-        local group="${!group_var:-}"
-        local perms="${!perms_var:-}"
-        local recursive="${!recursive_var:-}"
-        
-        # If owner is specified, setup permissions
         if [[ -n "$owner" ]]; then
-            # Default group to owner if not specified
-            [[ -z "$group" ]] && group="$owner"
-            # Default permission mode if not specified
-            [[ -z "$perms" ]] && perms="2770"
-            # Use per-share recursive setting, or fall back to global
-            [[ -z "$recursive" ]] && recursive="$global_recursive"
+            local group_var="SHARE_${i}_OWNER_GROUP"
+            local perms_var="SHARE_${i}_PERMISSION_MODE"
+            local recursive_var="SHARE_${i}_RECURSIVE_OWNERSHIP"
             
-            # Normalize recursive setting
-            recursive=$(normalize_bool "$recursive" "no")
+            local group="${!group_var:-$owner}"
+            local perms="${!perms_var:-2770}"
+            local recursive="${!recursive_var:-$global_recursive}"
+            recursive=$(_normalize_bool "$recursive" "no")
             
-            setup_share_permissions "$share_path" "$owner" "$group" "$perms" "$recursive"
+            _setup_permissions "$share_path" "$owner" "$group" "$perms" "$recursive"
         fi
         
+        # Setup recycle bin
         local recycle_var="SHARE_${i}_RECYCLE_BIN"
         local recycle
-        recycle=$(normalize_bool "${!recycle_var:-no}" "no")
+        recycle=$(_normalize_bool "${!recycle_var:-no}" "no")
         
         if [[ "$recycle" == "yes" ]]; then
-            local recycle_path="$share_path/.recycle"
-            if [[ ! -e "$recycle_path" ]]; then
-                mkdir -p "$recycle_path"
-                progress "Created recycle bin: $recycle_path"
+            local recycle_base="$share_path/.recycle"
+            
+            if [[ ! -e "$recycle_base" ]]; then
+                mkdir -p "$recycle_base"
                 ((dir_count++))
             fi
+            
+            local dir_mode_var="SHARE_${i}_RECYCLE_DIRECTORY_MODE"
+            chmod "${!dir_mode_var:-0777}" "$recycle_base" 2>/dev/null || true
+            
+            # Create per-user directories
+            local subdir_mode_var="SHARE_${i}_RECYCLE_SUB_DIRECTORY_MODE"
+            local subdir_mode="${!subdir_mode_var:-0700}"
+            
+            local -a raw_entries=()
+            for list_var in "SHARE_${i}_VALID_USERS" "SHARE_${i}_WRITE_LIST" "SHARE_${i}_READ_LIST"; do
+                [[ -n "${!list_var:-}" ]] && IFS=' ' read -ra tmp <<< "${!list_var}" && raw_entries+=("${tmp[@]}")
+            done
+            
+            # Expand @groups to get all users first
+            local -a all_users=()
+            for entry in "${raw_entries[@]}"; do
+                if [[ "$entry" =~ ^@(.+)$ ]]; then
+                    # It's a group - expand to members
+                    local group_name="${BASH_REMATCH[1]}"
+                    local group_entry
+                    group_entry=$(getent group "$group_name" 2>/dev/null) || continue
+                    local members="${group_entry##*:}"
+                    if [[ -n "$members" ]]; then
+                        IFS=',' read -ra grp_users <<< "$members"
+                        all_users+=("${grp_users[@]}")
+                    fi
+                else
+                    # It's a user
+                    all_users+=("$entry")
+                fi
+            done
+            
+            # Create directories for unique valid users
+            local processed=""
+            for entry in "${all_users[@]}"; do
+                [[ -z "$entry" || " $processed " =~ " $entry " ]] && continue
+                [[ ! "$entry" =~ ^[a-zA-Z0-9._-]+$ ]] && continue
+                processed="$processed $entry"
+                
+                if getent passwd "$entry" >/dev/null 2>&1; then
+                    local user_dir="$recycle_base/$entry"
+                    mkdir -p "$user_dir" 2>/dev/null || continue
+                    chown "$entry:$entry" "$user_dir" 2>/dev/null || true
+                    chmod "$subdir_mode" "$user_dir" 2>/dev/null || true
+                    [[ ! -f "$user_dir/.initialized" ]] && touch "$user_dir/.initialized" && ((dir_count++))
+                fi
+            done
         fi
-    done <<< "$share_indices"
+    done <<< "$indices"
     
-    log_info "Directory creation complete ($dir_count directories created)"
+    _conf_log_ok "Created $dir_count directories"
 }
 
-global_config() {
-    log_info "Generating global Samba configuration..."
+# ============================================================================
+# GLOBAL CONFIGURATION
+# ============================================================================
+_global_config() {
+    _conf_log_info "Generating global configuration..."
     
-    cat > "$SMB_CONF" << 'EOF'
+    cat > "$_SMB_CONF" << 'EOF'
 [global]
 EOF
 
-    # === Naming & Identity Settings ===
+    # === Identity ===
     local netbios_name="${NETBIOS_NAME:-NASSERVER}"
-    netbios_name="${netbios_name:0:15}"  # Max 15 chars
-    write_conf "   netbios name = $netbios_name"
+    _write_conf "   netbios name = ${netbios_name:0:15}"
+    _write_conf "   workgroup = ${SMB_WORKGROUP:-WORKGROUP}"
+    _write_conf "   server string = ${SERVER_STRING:-Samba NAS Server}"
     
-    write_conf "   workgroup = ${SMB_WORKGROUP:-WORKGROUP}"
-    write_conf "   server string = ${SERVER_STRING:-Samba NAS Server}"
-
-    # === Security Settings ===
-    local security_mode="${SECURITY_MODE:-user}"
-    security_mode="${security_mode,,}"
-    case "$security_mode" in
-        user|share|ads|domain) write_conf "   security = $security_mode" ;;
-        *) write_conf "   security = user" ;;
+    # === Security Mode ===
+    local security="${SECURITY_MODE:-user}"
+    case "${security,,}" in
+        user|share|ads|domain) _write_conf "   security = ${security,,}" ;;
+        *) _write_conf "   security = user" ;;
     esac
-
-    local passdb_backend="${PASSDB_BACKEND:-tdbsam}"
-    write_conf "   passdb backend = $passdb_backend"
-
-    write_conf "   server role = ${SERVER_ROLE:-standalone server}"
-
-    # === Logging Settings ===
-    # === Basic Configuration Info ===
-    local max_open_files="${MAX_OPEN_FILES:-30000}"
-    max_open_files=$(validate_numeric "$max_open_files" 2>/dev/null) || max_open_files=30000
-    write_conf "   max open files = $max_open_files"
-
-    # === Protocol & Encryption Settings ===
-    # Research: SMB3_11 is minimum for modern security (Windows 10/11, Server 2016+)
-    # Never set server_max_protocol - let Samba default to latest stable version
-    local server_min_protocol="${SERVER_MIN_PROTOCOL:-SMB3_11}"
-    write_conf "   server min protocol = $server_min_protocol"
+    _write_conf "   passdb backend = ${PASSDB_BACKEND:-tdbsam}"
+    _write_conf "   server role = ${SERVER_ROLE:-standalone server}"
     
-    local server_max_protocol="${SERVER_MAX_PROTOCOL:-}"
-    if [[ -n "$server_max_protocol" ]]; then
-        write_conf "   server max protocol = $server_max_protocol"
-    fi
+    # === Protocol - SMB3_11 for maximum security (Android compatible) ===
+    _write_conf "   server min protocol = ${SERVER_MIN_PROTOCOL:-SMB3_11}"
+    [[ -n "${SERVER_MAX_PROTOCOL:-}" ]] && _write_conf "   server max protocol = $SERVER_MAX_PROTOCOL"
+    _write_conf "   client min protocol = ${CLIENT_MIN_PROTOCOL:-SMB3_11}"
+    [[ -n "${CLIENT_MAX_PROTOCOL:-}" ]] && _write_conf "   client max protocol = $CLIENT_MAX_PROTOCOL"
     
-    local client_min_protocol="${CLIENT_MIN_PROTOCOL:-SMB3_11}"
-    write_conf "   client min protocol = $client_min_protocol"
-    
-    local client_max_protocol="${CLIENT_MAX_PROTOCOL:-}"
-    if [[ -n "$client_max_protocol" ]]; then
-        write_conf "   client max protocol = $client_max_protocol"
-    fi
-
-    # === Encryption Settings ===
-    # Research: "desired" is optimal balance (auto-negotiates, doesn't block SMB3 clients)
-    # Microsoft/Samba best practice: don't force encryption unless required by policy
+    # === Encryption (desired = Android compatible, required = breaks Android) ===
     local encrypt="${GLOBAL_ENCRYPT:-desired}"
-    encrypt="${encrypt,,}"
-    case "$encrypt" in
-        required|enable|enabled|mandatory) encrypt="required" ;;
-        desired|auto|default) encrypt="desired" ;;
-        disable|disabled|off|no) encrypt="disabled" ;;
+    case "${encrypt,,}" in
+        required|mandatory) encrypt="required" ;;
+        desired|auto) encrypt="desired" ;;
+        disabled|off|no) encrypt="disabled" ;;
         *) encrypt="desired" ;;
     esac
     GLOBAL_ENCRYPT="$encrypt"
-    write_conf "   smb encrypt = $encrypt"
-    write_conf "   server smb encrypt = $encrypt"
-    write_conf "   client smb encrypt = ${CLIENT_SMB_ENCRYPT:-$encrypt}"
-
-    # SMB3 Encryption Algorithms (SMB 3.1.1+)
-    # Research: AES-128-GCM fastest with CPU AES acceleration, AES-256-GCM strongest
-    # Windows Server 2022/Windows 11 added AES-256, but AES-128-GCM is default for speed
-    local smb3_encrypt="${SMB3_ENCRYPTION_ALGORITHMS:-AES-128-GCM, AES-128-CCM}"
-    write_conf "   server smb3 encryption algorithms = $smb3_encrypt"
-    write_conf "   client smb3 encryption algorithms = ${CLIENT_SMB3_ENCRYPTION_ALGORITHMS:-$smb3_encrypt}"
-
-    # === Signing Settings ===
-    # Research: mandatory signing is Windows Server 2022+ default for security
-    # Minimal performance impact on modern CPUs with AES-NI
-    local server_signing="${SERVER_SIGNING:-mandatory}"
-    server_signing="${server_signing,,}"
-    case "$server_signing" in
-        mandatory|required) server_signing="mandatory" ;;
-        auto|default) server_signing="auto" ;;
-        disabled|off|no) server_signing="disabled" ;;
-        *) server_signing="mandatory" ;;
+    _write_conf "   smb encrypt = $encrypt"
+    _write_conf "   server smb encrypt = $encrypt"
+    _write_conf "   client smb encrypt = ${CLIENT_SMB_ENCRYPT:-$encrypt}"
+    
+    # Encryption algorithms (safe for Android)
+    [[ -n "${SMB3_ENCRYPTION_ALGORITHMS:-}" ]] && {
+        _write_conf "   server smb3 encryption algorithms = $SMB3_ENCRYPTION_ALGORITHMS"
+        _write_conf "   client smb3 encryption algorithms = ${CLIENT_SMB3_ENCRYPTION_ALGORITHMS:-$SMB3_ENCRYPTION_ALGORITHMS}"
+    }
+    
+    # === Signing (mandatory works with Android, but DO NOT set signing algorithms) ===
+    local signing="${SERVER_SIGNING:-mandatory}"
+    case "${signing,,}" in
+        mandatory|required) signing="mandatory" ;;
+        disabled|off) signing="disabled" ;;
+        *) signing="default" ;;
     esac
-    write_conf "   server signing = $server_signing"
+    _write_conf "   server signing = $signing"
     
     local client_signing="${CLIENT_SIGNING:-mandatory}"
-    client_signing="${client_signing,,}"
-    case "$client_signing" in
+    case "${client_signing,,}" in
         mandatory|required) client_signing="mandatory" ;;
-        auto|default) client_signing="auto" ;;
-        disabled|off|no) client_signing="disabled" ;;
-        *) client_signing="mandatory" ;;
+        disabled|off) client_signing="disabled" ;;
+        *) client_signing="default" ;;
     esac
-    write_conf "   client signing = $client_signing"
+    _write_conf "   client signing = $client_signing"
     
-    local client_ipc_signing="${CLIENT_IPC_SIGNING:-required}"
-    client_ipc_signing="${client_ipc_signing,,}"
-    case "$client_ipc_signing" in
-        required|mandatory) client_ipc_signing="required" ;;
-        auto|default) client_ipc_signing="auto" ;;
-        disabled|off|no) client_ipc_signing="disabled" ;;
-        *) client_ipc_signing="required" ;;
+    local ipc_signing="${CLIENT_IPC_SIGNING:-required}"
+    case "${ipc_signing,,}" in
+        required|mandatory) ipc_signing="required" ;;
+        disabled|off) ipc_signing="disabled" ;;
+        *) ipc_signing="auto" ;;
     esac
-    write_conf "   client ipc signing = $client_ipc_signing"
-
-    # SMB3 Signing Algorithms (SMB 3.1.1+)
-    # Research: AES-128-GMAC fastest, introduced in Windows Server 2022
-    local smb3_signing="${SMB3_SIGNING_ALGORITHMS:-AES-128-GMAC, AES-128-CMAC}"
-    write_conf "   server smb3 signing algorithms = $smb3_signing"
-    write_conf "   client smb3 signing algorithms = ${CLIENT_SMB3_SIGNING_ALGORITHMS:-$smb3_signing}"
-
-    # === Authentication Security ===
-    # Research: NTLMv2-only is safe, disabled only for high-security environments with Kerberos
-    local ntlm_auth="${NTLM_AUTH:-ntlmv2-only}"
-    ntlm_auth="${ntlm_auth,,}"
-    case "$ntlm_auth" in
-        disabled|no|off) ntlm_auth="disabled" ;;
-        ntlmv2-only|ntlmv2only|ntlmv2) ntlm_auth="ntlmv2-only" ;;
-        ntlmv1-permitted|yes) ntlm_auth="ntlmv1-permitted" ;;
-        *) ntlm_auth="ntlmv2-only" ;;
+    _write_conf "   client ipc signing = $ipc_signing"
+    
+    # CRITICAL: DO NOT set SMB3 signing algorithms - breaks Android!
+    
+    # === Authentication ===
+    local ntlm="${NTLM_AUTH:-ntlmv2-only}"
+    case "${ntlm,,}" in
+        disabled|no) ntlm="disabled" ;;
+        ntlmv2-only|ntlmv2) ntlm="ntlmv2-only" ;;
+        ntlmv1-permitted|yes) ntlm="ntlmv1-permitted" ;;
+        *) ntlm="ntlmv2-only" ;;
     esac
-    write_conf "   ntlm auth = $ntlm_auth"
+    _write_conf "   ntlm auth = $ntlm"
+    _write_conf "   lanman auth = $(_normalize_bool "${LANMAN_AUTH:-no}" "no")"
+    _write_conf "   client ntlmv2 auth = $(_normalize_bool "${CLIENT_NTLMV2_AUTH:-yes}" "yes")"
+    _write_conf "   client lanman auth = $(_normalize_bool "${CLIENT_LANMAN_AUTH:-no}" "no")"
+    _write_conf "   client plaintext auth = $(_normalize_bool "${CLIENT_PLAINTEXT_AUTH:-no}" "no")"
     
-    local lanman_auth=$(normalize_bool "${LANMAN_AUTH:-no}" "no")
-    write_conf "   lanman auth = $lanman_auth"
+    local restrict="${RESTRICT_ANONYMOUS:-2}"
+    restrict=$(_validate_numeric "$restrict" 2>/dev/null) || restrict=2
+    [[ "$restrict" -ge 0 && "$restrict" -le 2 ]] && _write_conf "   restrict anonymous = $restrict"
+    _write_conf "   null passwords = $(_normalize_bool "${NULL_PASSWORDS:-no}" "no")"
     
-    local client_ntlmv2_auth=$(normalize_bool "${CLIENT_NTLMV2_AUTH:-yes}" "yes")
-    write_conf "   client ntlmv2 auth = $client_ntlmv2_auth"
+    # === Networking (NetBIOS disabled by default - not needed for Android) ===
+    [[ -n "${SAMBA_INTERFACES:-}" ]] && _write_conf "   interfaces = $SAMBA_INTERFACES"
+    _write_conf "   bind interfaces only = $(_normalize_bool "${BIND_INTERFACES_ONLY:-no}" "no")"
     
-    local client_lanman_auth=$(normalize_bool "${CLIENT_LANMAN_AUTH:-no}" "no")
-    write_conf "   client lanman auth = $client_lanman_auth"
+    local disable_netbios
+    disable_netbios=$(_normalize_bool "${DISABLE_NETBIOS:-yes}" "yes")
+    local smb_port
+    smb_port=$(_validate_numeric "${SMB_PORT:-445}" 2>/dev/null) || smb_port=445
     
-    local client_plaintext_auth=$(normalize_bool "${CLIENT_PLAINTEXT_AUTH:-no}" "no")
-    write_conf "   client plaintext auth = $client_plaintext_auth"
-    
-    # Research: restrict_anonymous = 2 is most secure (require authentication)
-    local restrict_anonymous="${RESTRICT_ANONYMOUS:-2}"
-    restrict_anonymous=$(validate_numeric "$restrict_anonymous" 2>/dev/null) || restrict_anonymous=2
-    if [[ "$restrict_anonymous" -ge 0 && "$restrict_anonymous" -le 2 ]]; then
-        write_conf "   restrict anonymous = $restrict_anonymous"
-    fi
-    
-    local null_passwords=$(normalize_bool "${NULL_PASSWORDS:-no}" "no")
-    write_conf "   null passwords = $null_passwords"
-
-    # === Networking Settings ===
-    local interfaces="${SAMBA_INTERFACES:-}"
-    local bind_interfaces_only="${BIND_INTERFACES_ONLY:-no}"
-    bind_interfaces_only=$(normalize_bool "$bind_interfaces_only" "no")
-
-    if [[ -n "$interfaces" ]]; then
-        write_conf "   interfaces = $interfaces"
-    fi
-    write_conf "   bind interfaces only = $bind_interfaces_only"
-
-    local disable_netbios netbios_port smb_port
-    # Research (Nov 2025): Windows Server 2025 no longer opens NetBIOS ports by default
-    # NetBIOS was only necessary for SMB1 usage, which is deprecated
-    disable_netbios=$(normalize_bool "${DISABLE_NETBIOS:-yes}" "yes")
-    
-    netbios_port=$(validate_numeric "${NETBIOS_PORT:-139}" 2>/dev/null) || netbios_port=139
-    smb_port=$(validate_numeric "${SMB_PORT:-445}" 2>/dev/null) || smb_port=445
-    
-    write_conf "   disable netbios = $disable_netbios"
+    _write_conf "   disable netbios = $disable_netbios"
     if [[ "$disable_netbios" == "yes" ]]; then
-        write_conf "   smb ports = $smb_port"
+        _write_conf "   smb ports = $smb_port"
     else
-        write_conf "   smb ports = $smb_port $netbios_port"
+        local netbios_port
+        netbios_port=$(_validate_numeric "${NETBIOS_PORT:-139}" 2>/dev/null) || netbios_port=139
+        _write_conf "   smb ports = $smb_port $netbios_port"
     fi
     
-    # === Network Services ===
-    local wins_support=$(normalize_bool "${WINS_SUPPORT:-no}" "no")
-    write_conf "   wins support = $wins_support"
+    # === Network Services (all disabled for NAS) ===
+    _write_conf "   wins support = $(_normalize_bool "${WINS_SUPPORT:-no}" "no")"
+    _write_conf "   local master = $(_normalize_bool "${LOCAL_MASTER:-no}" "no")"
+    _write_conf "   preferred master = $(_normalize_bool "${PREFERRED_MASTER:-no}" "no")"
+    _write_conf "   domain master = $(_normalize_bool "${DOMAIN_MASTER:-no}" "no")"
+    _write_conf "   dns proxy = $(_normalize_bool "${DNS_PROXY:-no}" "no")"
     
-    local local_master=$(normalize_bool "${LOCAL_MASTER:-no}" "no")
-    write_conf "   local master = $local_master"
+    # === Logging (default 0 for production - higher levels impact performance) ===
+    local log_level
+    log_level=$(_validate_numeric "${LOG_LEVEL:-0}" 2>/dev/null) || log_level=0
+    [[ "$log_level" -ge 0 && "$log_level" -le 10 ]] && _write_conf "   log level = $log_level"
     
-    local preferred_master=$(normalize_bool "${PREFERRED_MASTER:-no}" "no")
-    write_conf "   preferred master = $preferred_master"
+    local max_log
+    max_log=$(_validate_numeric "${MAX_LOG_SIZE:-50000}" 2>/dev/null) || max_log=50000
+    _write_conf "   max log size = $max_log"
+    _write_conf "   log file = ${SAMBA_LOG_FILE:-/var/log/samba/%m.log}"
+    _write_conf "   logging = ${LOGGING:-file}"
+    _write_conf "   debug timestamp = $(_normalize_bool "${DEBUG_TIMESTAMP:-yes}" "yes")"
+    _write_conf "   debug pid = $(_normalize_bool "${DEBUG_PID:-yes}" "yes")"
+    _write_conf "   debug uid = $(_normalize_bool "${DEBUG_UID:-yes}" "yes")"
     
-    local domain_master=$(normalize_bool "${DOMAIN_MASTER:-no}" "no")
-    write_conf "   domain master = $domain_master"
-
-    # === Logging Settings ===
-    # Research: Level 0-1 = production (<1% impact), Level 2 = troubleshooting (2-3%), 
-    # Level 3+ = debugging (5-30% impact), never use >3 in production
-    local log_level="${LOG_LEVEL:-1}"
-    log_level=$(validate_numeric "$log_level" 2>/dev/null) || log_level=1
-    if [[ "$log_level" -ge 0 && "$log_level" -le 10 ]]; then
-        write_conf "   log level = $log_level"
-    fi
+    # === Directories ===
+    _write_conf "   lock dir = $_LOCK_DIR"
+    _write_conf "   pid directory = $_PID_DIR"
+    _write_conf "   private dir = $_PRIVATE_DIR"
+    _write_conf "   state directory = $_STATE_DIR"
+    _write_conf "   cache directory = $_CACHE_DIR"
     
-    # Research: 50MB (50000 KB) is good balance for rotation
-    local max_log_size="${MAX_LOG_SIZE:-50000}"
-    max_log_size=$(validate_numeric "$max_log_size" 2>/dev/null) || max_log_size=50000
-    write_conf "   max log size = $max_log_size"
-    
-    # Research: %m (client machine name) allows per-client troubleshooting
-    local log_file="${LOG_FILE:-/var/log/samba/%m.log}"
-    write_conf "   log file = $log_file"
-    
-    # Research: syslog = 0 is optimal (use file logging for performance)
-    local syslog="${SYSLOG:-0}"
-    syslog=$(validate_numeric "$syslog" 2>/dev/null) || syslog=0
-    write_conf "   syslog = $syslog"
-    
-    local syslog_only=$(normalize_bool "${SYSLOG_ONLY:-no}" "no")
-    write_conf "   syslog only = $syslog_only"
-    
-    # Research: Always include timestamp, PID, UID for troubleshooting
-    local debug_timestamp=$(normalize_bool "${DEBUG_TIMESTAMP:-yes}" "yes")
-    write_conf "   debug timestamp = $debug_timestamp"
-    
-    local debug_pid=$(normalize_bool "${DEBUG_PID:-yes}" "yes")
-    write_conf "   debug pid = $debug_pid"
-    
-    local debug_uid=$(normalize_bool "${DEBUG_UID:-yes}" "yes")
-    write_conf "   debug uid = $debug_uid"
-    
-    local logging="${LOGGING:-file}"
-    if [[ "$logging" == "syslog" || "$logging" == "file" ]]; then
-        write_conf "   logging = $logging"
-    fi
-
-    # === Samba Directory Paths ===
-    write_conf "   lock dir = $LOCK_DIR"
-    write_conf "   pid directory = $PID_DIR"
-    write_conf "   private dir = $PRIVATE_DIR"
-    write_conf "   state directory = $STATE_DIR"
-    write_conf "   cache directory = $CACHE_DIR"
-
     # === Name Resolution ===
-    local name_resolve_order="${NAME_RESOLVE_ORDER:-bcast host lmhosts wins}"
-    write_conf "   name resolve order = $name_resolve_order"
-
-    local dns_proxy="${DNS_PROXY:-no}"
-    dns_proxy=$(normalize_bool "$dns_proxy" "no")
-    write_conf "   dns proxy = $dns_proxy"
-
-    # === Guest & User Mapping ===
-    local map_to_guest="${MAP_TO_GUEST:-Never}"
-    map_to_guest="${map_to_guest,,}"
-    case "$map_to_guest" in
-        "bad user"|baduser) write_conf "   map to guest = Bad User" ;;
-        "bad password"|badpassword) write_conf "   map to guest = Bad Password" ;;
-        "never"|no) write_conf "   map to guest = Never" ;;
-        *) write_conf "   map to guest = Never" ;;
+    _write_conf "   name resolve order = ${NAME_RESOLVE_ORDER:-bcast host lmhosts wins}"
+    
+    # === Guest Mapping ===
+    local map_guest="${MAP_TO_GUEST:-Never}"
+    case "${map_guest,,}" in
+        "bad user"|baduser) _write_conf "   map to guest = Bad User" ;;
+        "bad password"|badpassword) _write_conf "   map to guest = Bad Password" ;;
+        *) _write_conf "   map to guest = Never" ;;
     esac
-
-    if [[ -e "$GUEST_ACC" ]]; then
-        write_conf "   guest account = ${GUEST_ACCOUNT:-guest}"
-    fi
-
-    # === File Handling & Performance ===
-    # Research: sendfile provides 30% speedup with zero-copy transfers
-    local use_sendfile=$(normalize_bool "${USE_SENDFILE:-yes}" "yes")
-    write_conf "   use sendfile = $use_sendfile"
+    [[ -e "$_GUEST_ACC" ]] && _write_conf "   guest account = ${GUEST_ACCOUNT:-guest}"
     
-    # Research: 16KB is optimal for most networks (balance between overhead and efficiency)
-    # Values over 65KB waste memory, under 2KB cause problems
-    local min_receivefile_size="${MIN_RECEIVEFILE_SIZE:-16384}"
-    min_receivefile_size=$(validate_numeric "$min_receivefile_size" 2>/dev/null) || min_receivefile_size=16384
-    write_conf "   min receivefile size = $min_receivefile_size"
+    # === Performance (optimized for high-scale: 1000+ clients) ===
+    _write_conf "   use sendfile = $(_normalize_bool "${USE_SENDFILE:-yes}" "yes")"
     
-    # Research: 16KB threshold for async I/O gives 15-30% speedup on large files
-    # Modern SSDs benefit from async I/O, HDDs may want larger (65536)
-    local aio_read_size="${AIO_READ_SIZE:-16384}"
-    aio_read_size=$(validate_numeric "$aio_read_size" 2>/dev/null) || aio_read_size=16384
-    write_conf "   aio read size = $aio_read_size"
+    local min_recv aio_read aio_write max_xmit
+    min_recv=$(_validate_numeric "${MIN_RECEIVEFILE_SIZE:-16384}" 2>/dev/null) || min_recv=16384
+    # AIO: 1 = always async (best for large files), 0 = sync (may be better for many small files)
+    aio_read=$(_validate_numeric "${AIO_READ_SIZE:-1}" 2>/dev/null) || aio_read=1
+    aio_write=$(_validate_numeric "${AIO_WRITE_SIZE:-1}" 2>/dev/null) || aio_write=1
+    max_xmit=$(_validate_numeric "${MAX_XMIT:-65535}" 2>/dev/null) || max_xmit=65535
     
-    local aio_write_size="${AIO_WRITE_SIZE:-16384}"
-    aio_write_size=$(validate_numeric "$aio_write_size" 2>/dev/null) || aio_write_size=16384
-    write_conf "   aio write size = $aio_write_size"
+    _write_conf "   min receivefile size = $min_recv"
+    _write_conf "   aio read size = $aio_read"
+    _write_conf "   aio write size = $aio_write"
+    _write_conf "   read raw = $(_normalize_bool "${READ_RAW:-yes}" "yes")"
+    _write_conf "   write raw = $(_normalize_bool "${WRITE_RAW:-yes}" "yes")"
+    _write_conf "   large readwrite = $(_normalize_bool "${LARGE_READWRITE:-yes}" "yes")"
+    [[ "$max_xmit" -ge 1024 && "$max_xmit" -le 65535 ]] && _write_conf "   max xmit = $max_xmit"
     
-    # Research: read/write raw enabled by default, provides low-latency operations
-    local read_raw=$(normalize_bool "${READ_RAW:-yes}" "yes")
-    write_conf "   read raw = $read_raw"
+    # SSD/Filesystem optimization - align allocations to block size
+    local alloc_roundup
+    alloc_roundup=$(_validate_numeric "${ALLOCATION_ROUNDUP_SIZE:-4096}" 2>/dev/null) || alloc_roundup=4096
+    _write_conf "   allocation roundup size = $alloc_roundup"
     
-    local write_raw=$(normalize_bool "${WRITE_RAW:-yes}" "yes")
-    write_conf "   write raw = $write_raw"
+    # === SMB2/3 Performance (enterprise-scale, optimized for both SMB2 & SMB3) ===
+    # Max credits: Higher = more parallel operations per client
+    # Range: 128-65535, default 8192 is conservative
+    # For 50+ connections per client, use maximum
+    local smb2_credits
+    smb2_credits=$(_validate_numeric "${SMB2_MAX_CREDITS:-65535}" 2>/dev/null) || smb2_credits=65535
+    [[ "$smb2_credits" -ge 128 && "$smb2_credits" -le 65535 ]] && \
+        _write_conf "   smb2 max credits = $smb2_credits"
     
-    # Research: 65535 is maximum negotiated packet size (default), optimal for gigabit+
-    local max_xmit="${MAX_XMIT:-65535}"
-    max_xmit=$(validate_numeric "$max_xmit" 2>/dev/null) || max_xmit=65535
-    if [[ "$max_xmit" -ge 1024 && "$max_xmit" -le 65535 ]]; then
-        write_conf "   max xmit = $max_xmit"
-    fi
+    # SMB2/3 buffer sizes: Maximum allowed by protocol
+    # 16MB (16777216) is the SMB2/3 protocol maximum
+    local smb2_max_read smb2_max_write smb2_max_trans
+    smb2_max_read=$(_validate_numeric "${SMB2_MAX_READ:-16777216}" 2>/dev/null) || smb2_max_read=16777216
+    smb2_max_write=$(_validate_numeric "${SMB2_MAX_WRITE:-16777216}" 2>/dev/null) || smb2_max_write=16777216
+    smb2_max_trans=$(_validate_numeric "${SMB2_MAX_TRANS:-16777216}" 2>/dev/null) || smb2_max_trans=16777216
+    
+    _write_conf "   smb2 max read = $smb2_max_read"
+    _write_conf "   smb2 max write = $smb2_max_write"
+    _write_conf "   smb2 max trans = $smb2_max_trans"
+    
+    _write_conf "   server multi channel support = $(_normalize_bool "${SERVER_MULTI_CHANNEL_SUPPORT:-yes}" "yes")"
     
     # === Connection Management ===
-    # Research: 300 seconds (5 min) is standard TCP keepalive for reliable clients
-    # Lower to 30-60 for unreliable networks
-    local keepalive="${KEEPALIVE:-300}"
-    keepalive=$(validate_numeric "$keepalive" 2>/dev/null) || keepalive=300
-    write_conf "   keepalive = $keepalive"
+    local keepalive deadtime
+    keepalive=$(_validate_numeric "${KEEPALIVE:-300}" 2>/dev/null) || keepalive=300
+    deadtime=$(_validate_numeric "${DEADTIME:-15}" 2>/dev/null) || deadtime=15
+    _write_conf "   keepalive = $keepalive"
+    _write_conf "   deadtime = $deadtime"
+    _write_conf "   getwd cache = $(_normalize_bool "${GETWD_CACHE:-yes}" "yes")"
     
-    # Research: 15 minutes is optimal balance (prevents resource exhaustion without annoying users)
-    # Busy servers: 5-10 min, home use: 30-60 min, 0 = never (not recommended)
-    local deadtime_conn="${DEADTIME:-15}"
-    deadtime_conn=$(validate_numeric "$deadtime_conn" 2>/dev/null) || deadtime_conn=15
-    write_conf "   deadtime = $deadtime_conn"
-
+    # === HIGH-SCALE CONNECTION SETTINGS (50K+ simultaneous connections) ===
+    local max_connections max_smbd
+    max_connections=$(_validate_numeric "${MAX_CONNECTIONS:-0}" 2>/dev/null) || max_connections=0
+    max_smbd=$(_validate_numeric "${MAX_SMBD_PROCESSES:-0}" 2>/dev/null) || max_smbd=0
+    
+    # 0 = unlimited (required for high-scale deployments)
+    _write_conf "   max connections = $max_connections"
+    [[ "$max_smbd" -gt 0 ]] && _write_conf "   max smbd processes = $max_smbd"
+    
+    # Durable handles for reconnection stability
+    _write_conf "   durable handles = $(_normalize_bool "${DURABLE_HANDLES:-yes}" "yes")"
+    
+    # CRITICAL: kernel share modes and posix locking cause browsing to lock files
+    # DISABLED by default for multi-client compatibility (Android/Windows/Linux)
+    _write_conf "   kernel share modes = $(_normalize_bool "${KERNEL_SHARE_MODES:-no}" "no")"
+    _write_conf "   posix locking = $(_normalize_bool "${POSIX_LOCKING:-no}" "no")"
+    
+    # SMB2/3 leases - DISABLED by default for multi-client compatibility
+    # Leases cause client-side caching that blocks other clients from opening files
+    _write_conf "   smb2 leases = $(_normalize_bool "${SMB2_LEASES:-no}" "no")"
+    
+    # Async operations for better throughput under high load
+    _write_conf "   async smb echo handler = $(_normalize_bool "${ASYNC_SMB_ECHO:-yes}" "yes")"
+    
+    # Connection caching (higher for enterprise scale)
+    local conn_cache
+    conn_cache=$(_validate_numeric "${CONN_CACHE_COUNT:-10000}" 2>/dev/null) || conn_cache=10000
+    _write_conf "   conn cache count = $conn_cache"
+    
+    # Max mux - maximum simultaneous operations per connection
+    local max_mux
+    max_mux=$(_validate_numeric "${MAX_MUX:-50}" 2>/dev/null) || max_mux=50
+    _write_conf "   max mux = $max_mux"
+    
     # === Locking & Oplocks ===
-    # Research: strict_locking = no is optimal (only check when requested, not every access)
-    # Only set "yes" for databases or corruption-prone applications
-    local strict_locking=$(normalize_bool "${STRICT_LOCKING:-no}" "no")
-    write_conf "   strict locking = $strict_locking"
+    # ALL DISABLED by default for multi-client compatibility
+    # Oplocks/leases cause aggressive client-side caching which prevents
+    # other clients from opening files. Directory browsing alone can lock files.
+    # Set OPLOCKS=yes ONLY if you have single-client access and need max performance.
+    _write_conf "   strict locking = $(_normalize_bool "${STRICT_LOCKING:-no}" "no")"
+    _write_conf "   oplocks = $(_normalize_bool "${OPLOCKS:-no}" "no")"
+    _write_conf "   level2 oplocks = $(_normalize_bool "${LEVEL2_OPLOCKS:-no}" "no")"
+    _write_conf "   kernel oplocks = $(_normalize_bool "${KERNEL_OPLOCKS:-no}" "no")"
     
-    # Research: oplocks provide 30% performance improvement through client-side caching
-    # Essential for good performance, only disable for databases
-    local oplocks=$(normalize_bool "${OPLOCKS:-yes}" "yes")
-    write_conf "   oplocks = $oplocks"
+    # Blocking locks - disable to prevent hangs
+    _write_conf "   blocking locks = $(_normalize_bool "${BLOCKING_LOCKS:-no}" "no")"
     
-    # Research: level2 oplocks allow read sharing with caching (good for collaboration)
-    local level2_oplocks=$(normalize_bool "${LEVEL2_OPLOCKS:-yes}" "yes")
-    write_conf "   level2 oplocks = $level2_oplocks"
+    # Lock spin settings for high contention scenarios
+    local lock_spin_time lock_spin_count
+    lock_spin_time=$(_validate_numeric "${LOCK_SPIN_TIME:-200}" 2>/dev/null) || lock_spin_time=200
+    lock_spin_count=$(_validate_numeric "${LOCK_SPIN_COUNT:-3}" 2>/dev/null) || lock_spin_count=3
+    _write_conf "   lock spin time = $lock_spin_time"
+    _write_conf "   lock spin count = $lock_spin_count"
     
-    # Research: kernel oplocks coordinate with local file access (important for NAS)
-    local kernel_oplocks=$(normalize_bool "${KERNEL_OPLOCKS:-yes}" "yes")
-    write_conf "   kernel oplocks = $kernel_oplocks"
+    # === Host Access ===
+    [[ -n "${HOSTS_ALLOW:-}" ]] && _write_conf "   hosts allow = $HOSTS_ALLOW"
+    [[ -n "${HOSTS_DENY:-}" ]] && _write_conf "   hosts deny = $HOSTS_DENY"
     
-    # Research: getwd_cache caches working directory paths (good for printer servers)
-    local getwd_cache=$(normalize_bool "${GETWD_CACHE:-yes}" "yes")
-    write_conf "   getwd cache = $getwd_cache"
-
-    # === Host Access Control ===
-    if [[ -n "${HOSTS_ALLOW:-}" ]]; then
-        write_conf "   hosts allow = $HOSTS_ALLOW"
-    fi
-    
-    if [[ -n "${HOSTS_DENY:-}" ]]; then
-        write_conf "   hosts deny = $HOSTS_DENY"
-    fi
-
-    # === Unix Permissions & Symlinks ===
-    local unix_extensions=$(normalize_bool "${UNIX_EXTENSIONS:-yes}" "yes")
-    write_conf "   unix extensions = $unix_extensions"
-    
-    local wide_links=$(normalize_bool "${WIDE_LINKS:-no}" "no")
-    write_conf "   wide links = $wide_links"
-    
-    local follow_symlinks=$(normalize_bool "${FOLLOW_SYMLINKS:-yes}" "yes")
-    write_conf "   follow symlinks = $follow_symlinks"
-    
-    local create_mask="${CREATE_MASK:-0664}"
-    write_conf "   create mask = $create_mask"
-    
-    local directory_mask="${DIRECTORY_MASK:-0775}"
-    write_conf "   directory mask = $directory_mask"
-    
-    write_conf "   dont descend = /proc,/dev,/etc,/lib,/lost+found,/initrd"
+    # === Unix/Filesystem ===
+    _write_conf "   unix extensions = $(_normalize_bool "${UNIX_EXTENSIONS:-yes}" "yes")"
+    _write_conf "   wide links = $(_normalize_bool "${WIDE_LINKS:-no}" "no")"
+    _write_conf "   follow symlinks = $(_normalize_bool "${FOLLOW_SYMLINKS:-yes}" "yes")"
+    _write_conf "   create mask = ${CREATE_MASK:-0664}"
+    _write_conf "   directory mask = ${DIRECTORY_MASK:-0775}"
+    _write_conf "   dont descend = /proc,/dev,/etc,/lib,/lost+found,/initrd"
     
     # === File Attributes ===
-    local store_dos_attributes=$(normalize_bool "${STORE_DOS_ATTRIBUTES:-yes}" "yes")
-    write_conf "   store dos attributes = $store_dos_attributes"
+    _write_conf "   store dos attributes = $(_normalize_bool "${STORE_DOS_ATTRIBUTES:-yes}" "yes")"
+    _write_conf "   map archive = $(_normalize_bool "${MAP_ARCHIVE:-no}" "no")"
+    _write_conf "   map system = $(_normalize_bool "${MAP_SYSTEM:-no}" "no")"
+    _write_conf "   map hidden = $(_normalize_bool "${MAP_HIDDEN:-no}" "no")"
     
-    local map_archive=$(normalize_bool "${MAP_ARCHIVE:-no}" "no")
-    write_conf "   map archive = $map_archive"
-    
-    local map_system=$(normalize_bool "${MAP_SYSTEM:-no}" "no")
-    write_conf "   map system = $map_system"
-    
-    local map_hidden=$(normalize_bool "${MAP_HIDDEN:-no}" "no")
-    write_conf "   map hidden = $map_hidden"
-
     # === Character Encoding ===
-    local unix_charset="${UNIX_CHARSET:-UTF-8}"
-    write_conf "   unix charset = $unix_charset"
+    _write_conf "   unix charset = ${UNIX_CHARSET:-UTF-8}"
+    _write_conf "   dos charset = ${DOS_CHARSET:-CP850}"
+    _write_conf "   mangled names = $(_normalize_bool "${MANGLED_NAMES:-no}" "no")"
     
-    local dos_charset="${DOS_CHARSET:-CP850}"
-    write_conf "   dos charset = $dos_charset"
+    # === Printing (disabled for NAS) ===
+    _write_conf "   load printers = $(_normalize_bool "${LOAD_PRINTERS:-no}" "no")"
+    _write_conf "   printing = ${PRINTING:-bsd}"
+    _write_conf "   printcap name = ${PRINTCAP_NAME:-/dev/null}"
+    _write_conf "   disable spoolss = $(_normalize_bool "${DISABLE_SPOOLSS:-yes}" "yes")"
     
-    # === Name Mangling ===
-    local mangled_names=$(normalize_bool "${MANGLED_NAMES:-no}" "no")
-    write_conf "   mangled names = $mangled_names"
-
-    # === Printing (Disabled by default for NAS) ===
-    local load_printers=$(normalize_bool "${LOAD_PRINTERS:-no}" "no")
-    write_conf "   load printers = $load_printers"
+    # === Misc (enterprise scale) ===
+    local max_files
+    max_files=$(_validate_numeric "${MAX_OPEN_FILES:-100000}" 2>/dev/null) || max_files=100000
+    _write_conf "   max open files = $max_files"
+    _write_conf "   nt pipe support = $(_normalize_bool "${NT_PIPE_SUPPORT:-yes}" "yes")"
+    _write_conf "   panic action = ${PANIC_ACTION:-/usr/lib/samba/panic-action %d}"
     
-    local printing="${PRINTING:-bsd}"
-    write_conf "   printing = $printing"
+    # === CRITICAL: Socket Options ===
+    # Per Samba Wiki: Modern kernels auto-tune TCP buffers. Setting socket_options
+    # DECREASES performance in most cases. Only set if you have specific requirements.
+    # DO NOT USE: socket options = TCP_NODELAY (already default since Samba 2.0.4)
+    [[ -n "${SOCKET_OPTIONS:-}" ]] && _write_conf "   socket options = $SOCKET_OPTIONS"
     
-    local printcap_name="${PRINTCAP_NAME:-/dev/null}"
-    write_conf "   printcap name = $printcap_name"
+    # === Name Resolution (optimized for pure SMB2/3 environments) ===
+    _write_conf "   name resolve order = ${NAME_RESOLVE_ORDER:-lmhosts wins host bcast}"
     
-    local disable_spoolss=$(normalize_bool "${DISABLE_SPOOLSS:-yes}" "yes")
-    write_conf "   disable spoolss = $disable_spoolss"
-
-    # === Socket Options ===
-    # NOTE: Modern Linux kernels (2.6+) have excellent auto-tuning.
-    # Setting socket options manually can DECREASE performance!
-    # Only set if you have a specific need (legacy systems, testing, etc.)
-    if [[ -n "${SOCKET_OPTIONS:-}" ]]; then
-        write_conf "   socket options = $SOCKET_OPTIONS"
-    else
-        write_conf ";   # socket options - NOT SET (kernel auto-tuning is better!)"
-    fi
-
+    # === Sync Settings (NEVER enable sync always in production - kills performance) ===
+    _write_conf "   sync always = $(_normalize_bool "${SYNC_ALWAYS:-no}" "no")"
+    _write_conf "   strict sync = $(_normalize_bool "${STRICT_SYNC:-no}" "no")"
+    
     # === macOS Support ===
-    local macos_opts
-    macos_opts=$(normalize_bool "${ENABLE_MACOS_OPTS:-yes}" "yes")
-    
-    if [[ "$macos_opts" == "yes" ]]; then
+    if [[ "$(_normalize_bool "${ENABLE_MACOS_OPTS:-yes}" "yes")" == "yes" ]]; then
         BASE_VFS_MODULES="catia fruit streams_xattr"
-        write_conf "   # Special configuration for Apple's Time Machine & Performance"
-        write_conf "   fruit:aapl = yes"
-        write_conf "   fruit:copyfile = yes"
-        write_conf "   fruit:nfs_aces = no"
-        write_conf "   fruit:metadata = stream"
-        write_conf "   fruit:model = MacSamba"
-        write_conf "   fruit:posix_rename = yes"
-        write_conf "   fruit:veto_appledouble = no"
-        write_conf "   fruit:wipe_intentionally_left_blank_rfork = yes"
-        write_conf "   fruit:delete_empty_adfiles = yes"
-    else
-        BASE_VFS_MODULES=""
+        _write_conf "   fruit:aapl = yes"
+        _write_conf "   fruit:copyfile = yes"
+        _write_conf "   fruit:nfs_aces = no"
+        _write_conf "   fruit:metadata = stream"
+        _write_conf "   fruit:model = MacSamba"
+        _write_conf "   fruit:posix_rename = yes"
+        _write_conf "   fruit:veto_appledouble = no"
+        _write_conf "   fruit:wipe_intentionally_left_blank_rfork = yes"
+        _write_conf "   fruit:delete_empty_adfiles = yes"
     fi
-
-    # === NT Pipe Support ===
-    local nt_pipe_support="${NT_PIPE_SUPPORT:-yes}"
-    nt_pipe_support=$(normalize_bool "$nt_pipe_support" "yes")
-    write_conf "   nt pipe support = $nt_pipe_support"
-
-    # === Panic Action (Error handling) ===
-    local panic_action="${PANIC_ACTION:-/usr/lib/samba/panic-action %d}"
-    write_conf "   panic action = $panic_action"
 }
 
-enable_guest_account() {
-    [[ -e "$GUEST_ACC" ]] || touch "$GUEST_ACC"
+# ============================================================================
+# SHARE CONFIGURATION
+# ============================================================================
+_enable_guest() {
+    [[ -e "$_GUEST_ACC" ]] || touch "$_GUEST_ACC"
 }
 
-configure_share() {
+_configure_share() {
     local i=$1
     local share_name_var="SHARE_NAME_$i"
     local share_name="${!share_name_var:-}"
-
-    if [[ -z "$share_name" ]]; then
-        log_error "SHARE_NAME_$i is not set"
-        return 1
-    fi
-
-    write_conf ""
-    write_conf "#============================ CONFIGURATION FOR USER SHARE: [$share_name] ============================"
-    write_conf "[$share_name]"
-
+    
+    [[ -z "$share_name" ]] && return 1
+    
+    _write_conf ""
+    _write_conf "[$share_name]"
+    
     local comment_var="SHARE_${i}_COMMENT"
-    [[ -n "${!comment_var:-}" ]] && write_conf "   comment = ${!comment_var}"
-
-    write_conf "   path = $DATA_DIR/$share_name"
-
-    if [[ "${GLOBAL_ENCRYPT:-auto}" == "auto" ]]; then
+    [[ -n "${!comment_var:-}" ]] && _write_conf "   comment = ${!comment_var}"
+    
+    _write_conf "   path = $_DATA_DIR/$share_name"
+    
+    # Per-share encryption (only if global is auto)
+    if [[ "${GLOBAL_ENCRYPT:-}" == "auto" ]]; then
         local encrypt_var="SHARE_${i}_ENCRYPT"
         local share_encrypt="${!encrypt_var:-auto}"
-        share_encrypt="${share_encrypt,,}"
-        case "$share_encrypt" in
-            required|require|mandatory|enabled|enable|yes|ok|y|ya|1) share_encrypt="required" ;;
-            disable|d|off|no|n|disabled|0) share_encrypt="disabled" ;;
+        case "${share_encrypt,,}" in
+            required|mandatory|yes) share_encrypt="required" ;;
+            disabled|off|no) share_encrypt="disabled" ;;
             *) share_encrypt="auto" ;;
         esac
-        write_conf "   server smb encrypt = $share_encrypt"
+        _write_conf "   server smb encrypt = $share_encrypt"
     fi
-
+    
+    # Extended attributes
     local ea_var="SHARE_${i}_ENABLE_EXTENDED_ATTRIBUTE"
-    local ea
-    ea=$(normalize_bool "${!ea_var:-yes}" "yes")
-    write_conf "   ea support = $ea"
-
+    _write_conf "   ea support = $(_normalize_bool "${!ea_var:-yes}" "yes")"
+    
     local dos_var="SHARE_${i}_ENABLE_DOS_ATTRIBUTE"
-    local dos_attr
-    dos_attr=$(normalize_bool "${!dos_var:-yes}" "yes")
-    write_conf "   store dos attributes = $dos_attr"
-
+    _write_conf "   store dos attributes = $(_normalize_bool "${!dos_var:-yes}" "yes")"
+    
+    # Users
     local valid_users_var="SHARE_${i}_VALID_USERS"
-    [[ -n "${!valid_users_var:-}" ]] && write_conf "   valid users = ${!valid_users_var}"
-
+    [[ -n "${!valid_users_var:-}" ]] && _write_conf "   valid users = ${!valid_users_var}"
+    
+    # Guest access
     local guest_ok_var="SHARE_${i}_GUEST_OK"
     local public_var="SHARE_${i}_PUBLIC"
-    local guest_ok
-    guest_ok=$(normalize_bool "${!guest_ok_var:-no}" "no")
-    local public
-    public=$(normalize_bool "${!public_var:-no}" "no")
-
-    if [[ "$guest_ok" == "yes" ]]; then
-        public="yes"
-        enable_guest_account
-    fi
-    write_conf "   public = $public"
-
+    local guest_ok public
+    guest_ok=$(_normalize_bool "${!guest_ok_var:-no}" "no")
+    public=$(_normalize_bool "${!public_var:-no}" "no")
+    
+    [[ "$guest_ok" == "yes" ]] && { public="yes"; _enable_guest; }
+    _write_conf "   public = $public"
+    
     local guest_only_var="SHARE_${i}_GUEST_ONLY"
     local guest_only
-    guest_only=$(normalize_bool "${!guest_only_var:-no}" "no")
+    guest_only=$(_normalize_bool "${!guest_only_var:-no}" "no")
+    [[ "$guest_only" == "yes" && -z "${!valid_users_var:-}" ]] && _enable_guest || guest_only="no"
+    _write_conf "   guest only = $guest_only"
     
-    if [[ "$guest_only" == "yes" && -z "${!valid_users_var:-}" ]]; then
-        enable_guest_account
-    else
-        guest_only="no"
-    fi
-    write_conf "   guest only = $guest_only"
-
+    # Browseable
     local browseable_var="SHARE_${i}_BROWSEABLE"
-    local browseable
-    browseable=$(normalize_bool "${!browseable_var:-yes}" "yes")
-    write_conf "   browseable = $browseable"
-
+    _write_conf "   browseable = $(_normalize_bool "${!browseable_var:-yes}" "yes")"
+    
+    # Read/Write
     local read_only_var="SHARE_${i}_READ_ONLY"
     local writeable_var="SHARE_${i}_WRITEABLE"
     local read_only writeable
-    read_only=$(normalize_bool "${!read_only_var:-yes}" "yes")
-    writeable=$(normalize_bool "${!writeable_var:-no}" "no")
-
-    if [[ "$read_only" == "no" || "$writeable" == "yes" ]]; then
-        writeable="yes"
-    else
-        writeable="no"
-    fi
-    write_conf "   writable = $writeable"
-
+    read_only=$(_normalize_bool "${!read_only_var:-yes}" "yes")
+    writeable=$(_normalize_bool "${!writeable_var:-no}" "no")
+    [[ "$read_only" == "no" || "$writeable" == "yes" ]] && writeable="yes" || writeable="no"
+    _write_conf "   writable = $writeable"
+    
+    # Access lists
     local read_list_var="SHARE_${i}_READ_LIST"
     local write_list_var="SHARE_${i}_WRITE_LIST"
-    [[ -n "${!read_list_var:-}" ]] && write_conf "   read list = ${!read_list_var}"
-    [[ -n "${!write_list_var:-}" ]] && write_conf "   write list = ${!write_list_var}"
-
-    local create_mask_var="SHARE_${i}_CREATE_MASK"
-    local force_create_mask_var="SHARE_${i}_FORCE_CREATE_MASK"
-    local dir_mask_var="SHARE_${i}_DIRECTORY_MASK"
-    local force_dir_mask_var="SHARE_${i}_FORCE_DIRECTORY_MASK"
-    local create_mask force_create_mask dir_mask force_dir_mask
+    [[ -n "${!read_list_var:-}" ]] && _write_conf "   read list = ${!read_list_var}"
+    [[ -n "${!write_list_var:-}" ]] && _write_conf "   write list = ${!write_list_var}"
     
-    create_mask=$(validate_numeric "${!create_mask_var:-}" 2>/dev/null) && write_conf "   create mask = $create_mask"
-    force_create_mask=$(validate_numeric "${!force_create_mask_var:-}" 2>/dev/null) && write_conf "   force create mode = $force_create_mask"
-    dir_mask=$(validate_numeric "${!dir_mask_var:-}" 2>/dev/null) && write_conf "   directory mask = $dir_mask"
-    force_dir_mask=$(validate_numeric "${!force_dir_mask_var:-}" 2>/dev/null) && write_conf "   force directory mode = $force_dir_mask"
-
+    # Permissions
+    local create_mask_var="SHARE_${i}_CREATE_MASK"
+    local force_create_var="SHARE_${i}_FORCE_CREATE_MASK"
+    local dir_mask_var="SHARE_${i}_DIRECTORY_MASK"
+    local force_dir_var="SHARE_${i}_FORCE_DIRECTORY_MASK"
+    
+    [[ -n "${!create_mask_var:-}" ]] && _write_conf "   create mask = ${!create_mask_var}"
+    [[ -n "${!force_create_var:-}" ]] && _write_conf "   force create mode = ${!force_create_var}"
+    [[ -n "${!dir_mask_var:-}" ]] && _write_conf "   directory mask = ${!dir_mask_var}"
+    [[ -n "${!force_dir_var:-}" ]] && _write_conf "   force directory mode = ${!force_dir_var}"
+    
+    # Force user/group
     local force_user_var="SHARE_${i}_FORCE_USER"
     local force_group_var="SHARE_${i}_FORCE_GROUP"
-    [[ -n "${!force_user_var:-}" ]] && write_conf "   force user = ${!force_user_var}"
-    [[ -n "${!force_group_var:-}" ]] && write_conf "   force group = ${!force_group_var}"
-
+    [[ -n "${!force_user_var:-}" ]] && _write_conf "   force user = ${!force_user_var}"
+    [[ -n "${!force_group_var:-}" ]] && _write_conf "   force group = ${!force_group_var}"
+    
+    # VFS modules
     local recycle_var="SHARE_${i}_RECYCLE_BIN"
     local btrfs_var="SHARE_${i}_IS_BTRFS"
     local recycle btrfs vfs_modules
     
-    recycle=$(normalize_bool "${!recycle_var:-no}" "no")
-    btrfs=$(normalize_bool "${!btrfs_var:-no}" "no")
+    recycle=$(_normalize_bool "${!recycle_var:-no}" "no")
+    btrfs=$(_normalize_bool "${!btrfs_var:-no}" "no")
     
     vfs_modules="${BASE_VFS_MODULES:-}"
     [[ "$recycle" == "yes" ]] && vfs_modules="$vfs_modules recycle"
     [[ "$btrfs" == "yes" ]] && vfs_modules="$vfs_modules btrfs"
     
-    write_conf "   vfs objects = $vfs_modules"
-
+    _write_conf "   vfs objects = $vfs_modules"
+    
+    # Recycle bin config
     if [[ "$recycle" == "yes" ]]; then
-        local recycle_max_var="SHARE_${i}_RECYCLE_MAX_SIZE"
-        local recycle_dir_mode_var="SHARE_${i}_RECYCLE_DIRECTORY_MODE"
-        local recycle_subdir_mode_var="SHARE_${i}_RECYCLE_SUB_DIRECTORY_MODE"
-        local recycle_dir_mode recycle_subdir_mode recycle_max_size
-
-        write_conf "   recycle:repository = $DATA_DIR/$share_name/.recycle/%U"
-        write_conf "   recycle:keeptree = yes"
-        write_conf "   recycle:versions = yes"
-        write_conf "   recycle:touch = yes"
-        write_conf "   recycle:touch_mtime = no"
+        local dir_mode_var="SHARE_${i}_RECYCLE_DIRECTORY_MODE"
+        local subdir_mode_var="SHARE_${i}_RECYCLE_SUB_DIRECTORY_MODE"
+        local max_size_var="SHARE_${i}_RECYCLE_MAX_SIZE"
         
-        recycle_dir_mode=$(validate_numeric "${!recycle_dir_mode_var:-}" 2>/dev/null) && write_conf "   recycle:directory_mode = $recycle_dir_mode" || write_conf "   recycle:directory_mode = 0777"
-        recycle_subdir_mode=$(validate_numeric "${!recycle_subdir_mode_var:-}" 2>/dev/null) && write_conf "   recycle:subdir_mode = $recycle_subdir_mode" || write_conf "   recycle:subdir_mode = 0700"
-        recycle_max_size=$(validate_numeric "${!recycle_max_var:-}" 2>/dev/null) && write_conf "   recycle:maxsize = $recycle_max_size"
-        
-        write_conf "   recycle:exclude = "
-        write_conf "   recycle:exclude_dir = .recycle"
+        _write_conf "   recycle:repository = $_DATA_DIR/$share_name/.recycle/%U"
+        _write_conf "   recycle:keeptree = yes"
+        _write_conf "   recycle:versions = yes"
+        _write_conf "   recycle:touch = yes"
+        _write_conf "   recycle:touch_mtime = no"
+        _write_conf "   recycle:directory_mode = ${!dir_mode_var:-0777}"
+        _write_conf "   recycle:subdir_mode = ${!subdir_mode_var:-0700}"
+        [[ -n "${!max_size_var:-}" ]] && _write_conf "   recycle:maxsize = ${!max_size_var}"
+        _write_conf "   recycle:exclude = "
+        _write_conf "   recycle:exclude_dir = .recycle"
     fi
 }
 
-configure_temp_share() {
-    local temp_on
-    temp_on=$(normalize_bool "${TEMP_SHARE_ON:-no}" "no")
+_configure_temp_share() {
+    [[ "$(_normalize_bool "${TEMP_SHARE_ON:-no}" "no")" != "yes" ]] && return
     
-    [[ "$temp_on" != "yes" ]] && return
-
-    local temp_name="${TEMP_SHARE_NAME:-temp-share}"
-
-    write_conf ""
-    write_conf "#============================ CONFIGURATION FOR: TEMP SHARE ============================"
-    write_conf "[$temp_name]"
-    write_conf "   path = $DATA_DIR/$temp_name"
+    local name="${TEMP_SHARE_NAME:-temp-share}"
     
-    [[ -n "${TEMP_SHARE_COMMENT:-}" ]] && write_conf "   comment = ${TEMP_SHARE_COMMENT}"
-
-    local read_only
-    read_only=$(normalize_bool "${TEMP_SHARE_READ_ONLY:-no}" "no")
-    write_conf "   read only = $read_only"
-
-    local public
-    public=$(normalize_bool "${TEMP_SHARE_PUBLIC:-yes}" "yes")
-    write_conf "   public = $public"
-
-    local recycle
-    recycle=$(normalize_bool "${TEMP_RECYCLE_BIN:-no}" "no")
+    _write_conf ""
+    _write_conf "[${name}]"
+    _write_conf "   path = $_DATA_DIR/$name"
+    [[ -n "${TEMP_SHARE_COMMENT:-}" ]] && _write_conf "   comment = $TEMP_SHARE_COMMENT"
+    _write_conf "   read only = $(_normalize_bool "${TEMP_SHARE_READ_ONLY:-no}" "no")"
+    _write_conf "   public = $(_normalize_bool "${TEMP_SHARE_PUBLIC:-yes}" "yes")"
     
-    local vfs_modules="${BASE_VFS_MODULES:-}"
+    local recycle vfs_modules
+    recycle=$(_normalize_bool "${TEMP_RECYCLE_BIN:-no}" "no")
+    vfs_modules="${BASE_VFS_MODULES:-}"
     [[ "$recycle" == "yes" ]] && vfs_modules="$vfs_modules recycle"
     
-    write_conf "   vfs objects = $vfs_modules"
-
+    _write_conf "   vfs objects = $vfs_modules"
+    
     if [[ "$recycle" == "yes" ]]; then
-        local recycle_dir_mode recycle_subdir_mode recycle_max_size
-        
-        write_conf "   recycle:repository = $DATA_DIR/$temp_name/.recycle/%U"
-        write_conf "   recycle:keeptree = yes"
-        write_conf "   recycle:versions = yes"
-        write_conf "   recycle:touch = yes"
-        write_conf "   recycle:touch_mtime = no"
-        
-        recycle_dir_mode=$(validate_numeric "${TEMP_RECYCLE_DIRECTORY_MODE:-}" 2>/dev/null) && write_conf "   recycle:directory_mode = $recycle_dir_mode" || write_conf "   recycle:directory_mode = 0777"
-        recycle_subdir_mode=$(validate_numeric "${TEMP_RECYCLE_SUB_DIRECTORY_MODE:-}" 2>/dev/null) && write_conf "   recycle:subdir_mode = $recycle_subdir_mode" || write_conf "   recycle:subdir_mode = 0700"
-        recycle_max_size=$(validate_numeric "${TEMP_RECYCLE_MAX_SIZE:-}" 2>/dev/null) && write_conf "   recycle:maxsize = $recycle_max_size"
-        
-        write_conf "   recycle:exclude = "
-        write_conf "   recycle:exclude_dir = .recycle"
+        _write_conf "   recycle:repository = $_DATA_DIR/$name/.recycle/%U"
+        _write_conf "   recycle:keeptree = yes"
+        _write_conf "   recycle:versions = yes"
+        _write_conf "   recycle:touch = yes"
+        _write_conf "   recycle:touch_mtime = no"
+        _write_conf "   recycle:directory_mode = ${TEMP_RECYCLE_DIRECTORY_MODE:-0777}"
+        _write_conf "   recycle:subdir_mode = ${TEMP_RECYCLE_SUB_DIRECTORY_MODE:-0700}"
+        [[ -n "${TEMP_RECYCLE_MAX_SIZE:-}" ]] && _write_conf "   recycle:maxsize = $TEMP_RECYCLE_MAX_SIZE"
+        _write_conf "   recycle:exclude = "
+        _write_conf "   recycle:exclude_dir = .recycle"
     fi
-
-    write_conf ""
-    write_conf "#============================ TEMP SHARE ENDS HERE ============================"
 }
 
-validate_samba_config() {
-    log_info "Validating Samba configuration with testparm..."
-    progress "Running Samba syntax validation..."
+_validate_config() {
+    _conf_log_info "Validating configuration..."
     
-    if ! command -v testparm &> /dev/null; then
-        exit_error "testparm not found. Cannot validate Samba configuration."
+    if ! command -v testparm &>/dev/null; then
+        _conf_error_exit "testparm not found"
     fi
     
-    if testparm -s "$SMB_CONF" >/dev/null 2>&1; then
-        log_info "✓ Samba configuration validation PASSED"
-        return 0
+    if testparm -s "$_SMB_CONF" >/dev/null 2>&1; then
+        _conf_log_ok "Configuration valid"
     else
-        log_error "Samba configuration validation FAILED"
-        exit_error "Configuration is invalid. Run 'testparm $SMB_CONF' for details."
+        _conf_error_exit "Invalid configuration - run 'testparm $_SMB_CONF'"
     fi
 }
 
-main() {
-    {
-        perf_start
-        
-        log_info "=== Samba Configuration Setup Started ==="
-        log_info "Script: $CONSTRUCT_CONF_SCRIPT_NAME v$CONSTRUCT_CONF_SCRIPT_VERSION"
-        log_info "Timestamp: $(date)"
-        log_info "Config file: $SMB_CONF"
-        [[ "$PROFILE_MODE" == "1" ]] && log_info "[PROFILE MODE] Enabled"
-        
-        create_share_directories
-        perf_mark "create_share_directories"
-        
-        validate_group_references
-        perf_mark "validate_group_references"
-        
-        global_config
-        perf_mark "global_config"
-
-        write_conf ""
-        write_conf "#============================ CONFIGURATION FOR NAS STARTS HERE ============================"
-        write_conf ""
-        write_conf "#============================ SHARE DEFINITIONS =============================="
-
-        local share_indices
-        share_indices=$(get_share_indices)
-        
-        if [[ -n "$share_indices" ]]; then
-            while IFS= read -r i; do
-                configure_share "$i" || continue
-            done <<< "$share_indices"
-        fi
-
-        write_conf ""
-        write_conf "#============================ CONFIGURATION FOR USER SHARES ENDS HERE ============================"
-
-        configure_temp_share
-        perf_mark "configure_shares"
-
-        write_conf "#============================ CONFIGURATION FOR NAS ENDS HERE ============================"
-        
-        validate_samba_config
-        perf_mark "validate_samba_config"
-        
-        log_info "=== Samba Configuration Setup Complete ==="
-        
-        if [[ "$PROFILE_MODE" == "1" ]]; then
-            local total_time
-            total_time=$(safe_arithmetic "$(date +%s%N 2>/dev/null || date +%s)" "-" "$PERF_START_TIME" 2>/dev/null) || total_time=0
-            if [[ $total_time -gt 1000000 ]]; then
-                total_time=$((total_time / 1000000))
-            else
-                total_time=0
-            fi
-            log_info "[PROFILE] Total execution time: ${total_time}ms"
-        fi
-    } 2>&1 | tee -a "$LOG_FILE"
+# ============================================================================
+# MAIN
+# ============================================================================
+_conf_main() {
+    _conf_log_info "=== Samba Configuration v$_CONF_SCRIPT_VERSION ==="
+    
+    _create_directories
+    _validate_references
+    _global_config
+    
+    _write_conf ""
+    _write_conf "#============================ SHARE DEFINITIONS ============================"
+    
+    local indices
+    indices=$(_get_share_indices)
+    
+    if [[ -n "$indices" ]]; then
+        while IFS= read -r i; do
+            _configure_share "$i" || continue
+        done <<< "$indices"
+    fi
+    
+    _configure_temp_share
+    
+    _write_conf ""
+    _write_conf "#============================ END CONFIGURATION ============================"
+    
+    _validate_config
+    
+    _conf_log_ok "Configuration complete: $_SMB_CONF"
 }
 
-main "$@"
+# Run main only if executed directly (not sourced)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    _conf_main "$@"
+else
+    # When sourced, just run main
+    _conf_main "$@"
+fi

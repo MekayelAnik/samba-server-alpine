@@ -1,212 +1,249 @@
 #!/bin/bash
-set -euo pipefail
+# smbd.sh - Samba Server Entrypoint (v3.5.1)
+# Optimized for production with Android/Windows/macOS compatibility
+set -uo pipefail
+# Note: NOT using set -e (errexit) as it causes issues with the monitoring loop
 
-
-if [[ -z "${SMBD_SCRIPT_NAME:-}" ]]; then
-    SMBD_SCRIPT_NAME="$(basename "$0")"
-    readonly SMBD_SCRIPT_NAME
-fi
-if [[ -z "${SMBD_SCRIPT_VERSION:-}" ]]; then
-    # SMBD_SCRIPT_VERSION format YYYY.MM.DD
-    readonly SMBD_SCRIPT_VERSION="2025.11.24"
-fi
 # ============================================================================
-# COLOR PALETTE - Elegant Terminal Output
+# CONFIGURATION
 # ============================================================================
-
-# === Status Colors ===
-readonly SUCCESS_GREEN='\033[38;5;10m'
-readonly ERROR_RED='\033[38;5;9m'
-readonly WARNING_YELLOW='\033[38;5;11m'
-readonly INFO_CYAN='\033[38;5;14m'
-
-# === Accent Colors ===
-readonly ORANGE='\033[38;5;208m'
-readonly LITE_GREEN='\033[38;5;10m'
-readonly NAVY_BLUE='\033[38;5;18m'
-readonly GREEN='\033[38;5;2m'
-readonly SEA_GREEN='\033[38;5;74m'
-readonly BLUE='\033[38;5;12m'
-readonly PURPLE='\033[38;5;141m'
-readonly MAGENTA='\033[38;5;13m'
-
-# === Neutral Colors ===
-readonly ASH_GRAY='\033[38;5;250m'
-readonly DARK_GRAY='\033[38;5;240m'
-readonly LIGHT_GRAY='\033[38;5;252m'
-readonly WHITE='\033[38;5;15m'
-
-# === Special Colors ===
-readonly GOLD='\033[38;5;220m'
-readonly TEAL='\033[38;5;45m'
-readonly PINK='\033[38;5;213m'
-readonly AMBER='\033[38;5;214m'
-
-# === Reset ===
-readonly NC='\033[0m'
-readonly BOLD='\033[1m'
-
-# Configuration defaults
+readonly SMBD_SCRIPT_VERSION="3.5.2"
 readonly DEBUG_MODE="${DEBUG_MODE:-0}"
 readonly SMB_STATUS_UPDATE_INTERVAL="${SMB_STATUS_UPDATE_INTERVAL:-30}"
 readonly BANNER_FILE="${BANNER_FILE:-/usr/bin/banner.sh}"
+readonly DATA_DIR="${DATA_DIR:-/data}"
+
+# Print version immediately
+echo "[i] === Samba Entrypoint v${SMBD_SCRIPT_VERSION} ==="
+
+# Script execution order - Users MUST be created BEFORE config validation
+readonly __SCRIPT_SOURCES=("constructUsers.sh" "constructConf.sh")
 
 # State tracking
 __BANNER_EXECUTED=0
 
-# Script execution order - CRITICAL: Users must be created BEFORE config validation
-readonly __SCRIPT_SOURCES=("constructUsers.sh" "constructConf.sh")
+# ============================================================================
+# COLORS (minimal set for production)
+# ============================================================================
+readonly RED='\033[38;5;9m'
+readonly GREEN='\033[38;5;10m'
+readonly YELLOW='\033[38;5;11m'
+readonly CYAN='\033[38;5;14m'
+readonly GRAY='\033[38;5;250m'
+readonly NC='\033[0m'
+readonly BOLD='\033[1m'
 
-# === Logging Functions ===
+# ============================================================================
+# LOGGING
+# ============================================================================
+log_error() { printf "${BOLD}${RED}[✗]${NC} %s\n" "$*" >&2; }
+log_warn()  { printf "${YELLOW}[!]${NC} %s\n" "$*" >&2; }
+log_info()  { printf "${CYAN}[i]${NC} %s\n" "$*"; }
+log_ok()    { printf "${GREEN}[✓]${NC} %s\n" "$*"; }
+
 error_exit() {
-    printf "${BOLD}${ERROR_RED}[✗ ERROR]${NC} %s\n" "$*" >&2
+    log_error "$*"
     exit 1
 }
 
-log_warning() {
-    printf "${WARNING_YELLOW}[! WARNING]${NC} %s\n" "$*" >&2
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+is_debug_enabled() {
+    case "${DEBUG_MODE,,}" in
+        yes|y|true|t|1) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
-log_info() {
-    printf "${INFO_CYAN}[i INFO]${NC} %s\n" "$*"
-}
-
-log_success() {
-    printf "${SUCCESS_GREEN}[✓ SUCCESS]${NC} %s\n" "$*"
-}
-
-print_header() {
-    printf "\n${BOLD}${NAVY_BLUE}═══════════════════════════════════════════════════════════════════${NC}\n"
-    printf "${BOLD}${NAVY_BLUE}   %s${NC}\n" "$*"
-    printf "${BOLD}${NAVY_BLUE}═══════════════════════════════════════════════════════════════════${NC}\n\n"
-}
-
-print_section() {
-    printf "\n${LITE_GREEN}═══ %s ===${NC}\n" "$*"
-}
-
-check_deprecated_variables() {
-    if [[ -n "${NUMBER_OF_SHARES:-}" ]]; then
-        log_warning "NUMBER_OF_SHARES is deprecated and no longer used. Shares are now auto-discovered via SHARE_NAME_* variables."
-    fi
-    
-    if [[ -n "${NUMBER_OF_USERS:-}" ]]; then
-        log_warning "NUMBER_OF_USERS is deprecated and no longer used. Users are now auto-discovered via USER_NAME_* variables."
-    fi
-}
-
-# Function to run banner.sh safely and only once
 run_banner() {
-    if [[ "$__BANNER_EXECUTED" -eq 1 ]]; then
-        return 0
-    fi
-
-    if [[ ! -f "$BANNER_FILE" ]]; then
-        printf "${ERROR_RED}Banner file not found: %s${NC}\n" "$BANNER_FILE" >&2
-        return 1
-    fi
-
-    if ! bash "$BANNER_FILE"; then
-        printf "${ERROR_RED}Failed to execute banner file: %s${NC}\n" "$BANNER_FILE" >&2
-        return 1
-    fi
-
+    [[ "$__BANNER_EXECUTED" -eq 1 ]] && return 0
+    [[ -f "$BANNER_FILE" ]] && bash "$BANNER_FILE" 2>/dev/null
     __BANNER_EXECUTED=1
-    return 0
 }
 
-# Validate numeric interval
-validate_interval() {
-    local interval="$1"
-    if ! [[ "$interval" =~ ^[0-9]+$ ]]; then
-        error_exit "SMB_STATUS_UPDATE_INTERVAL must be numeric, got: $interval"
-    fi
-}
-
-# Source required scripts in correct order
 source_scripts() {
-    print_section "Sourcing Configuration Scripts"
-    printf "${ASH_GRAY}Order: Users > Config${NC}\n\n"
+    printf "${GRAY}Loading configuration scripts...${NC}\n"
     
     for script in "${__SCRIPT_SOURCES[@]}"; do
         local script_path="/usr/bin/${script}"
-        printf "${SEA_GREEN}> Sourcing: %s${NC}\n" "$script"
         
-        if [[ ! -f "$script_path" ]]; then
-            error_exit "Script not found: $script_path"
-        fi
+        [[ ! -f "$script_path" ]] && error_exit "Script not found: $script_path"
         
         if ! source "$script_path"; then
             error_exit "Failed to source $script_path"
         fi
         
-        printf "${GREEN}✓ Successfully sourced: %s${NC}\n\n" "$script"
+        log_ok "Loaded: $script"
     done
-    
-    printf "${LITE_GREEN}=== All Configuration Scripts Sourced Successfully ===${NC}\n\n"
 }
 
-# Start SMB server with status monitoring
-start_server() {
-    local pid=""
-
-    # Cleanup trap
-    trap 'if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; fi' EXIT INT TERM
-
-    validate_interval "$SMB_STATUS_UPDATE_INTERVAL"
+# ============================================================================
+# RECYCLE BIN MAINTENANCE
+# Recreates user recycle directories if deleted during operation
+# ============================================================================
+check_recycle_bins() {
+    [[ -z "${DATA_DIR:-}" ]] && return 0
     
-    check_deprecated_variables
+    local share_vars fixed=0
+    share_vars=$(compgen -v | grep -E '^SHARE_NAME_[0-9]+$' 2>/dev/null) || return 0
+    
+    for share_name_var in $share_vars; do
+        local share_name="${!share_name_var}"
+        [[ -z "$share_name" ]] && continue
+        
+        local share_num="${share_name_var#SHARE_NAME_}"
+        local recycle_var="SHARE_${share_num}_RECYCLE_BIN"
+        local recycle="${!recycle_var:-no}"
+        
+        [[ ! "${recycle,,}" =~ ^(yes|y|true|t|1|enabled?)$ ]] && continue
+        
+        local share_path="${DATA_DIR}/${share_name}"
+        local recycle_base="${share_path}/.recycle"
+        
+        # Recreate base if missing
+        if [[ ! -d "$recycle_base" ]]; then
+            mkdir -p "$recycle_base" 2>/dev/null || continue
+            local mode_var="SHARE_${share_num}_RECYCLE_DIRECTORY_MODE"
+            chmod "${!mode_var:-0777}" "$recycle_base" 2>/dev/null
+            log_info "Recreated: ${recycle_base}"
+            ((fixed++)) || true
+        fi
+        
+        # Collect users from share config
+        local -a raw_entries=()
+        for list_var in "SHARE_${share_num}_VALID_USERS" "SHARE_${share_num}_WRITE_LIST" "SHARE_${share_num}_READ_LIST"; do
+            [[ -n "${!list_var:-}" ]] && IFS=' ' read -ra tmp <<< "${!list_var}" && raw_entries+=("${tmp[@]}")
+        done
+        
+        # Skip if no entries defined
+        [[ ${#raw_entries[@]} -eq 0 ]] && continue
+        
+        # Expand @groups to get all users
+        local -a all_users=()
+        for entry in "${raw_entries[@]}"; do
+            if [[ "$entry" =~ ^@(.+)$ ]]; then
+                # It's a group - expand to members
+                local group_name="${BASH_REMATCH[1]}"
+                local group_entry
+                group_entry=$(getent group "$group_name" 2>/dev/null) || continue
+                local members="${group_entry##*:}"
+                if [[ -n "$members" ]]; then
+                    IFS=',' read -ra group_members <<< "$members"
+                    all_users+=("${group_members[@]}")
+                fi
+            else
+                # It's a user
+                all_users+=("$entry")
+            fi
+        done
+        
+        # Skip if no users after expansion
+        [[ ${#all_users[@]} -eq 0 ]] && continue
+        
+        # Create directories for unique valid users
+        local subdir_mode_var="SHARE_${share_num}_RECYCLE_SUB_DIRECTORY_MODE"
+        local subdir_mode="${!subdir_mode_var:-0700}"
+        local processed=""
+        
+        for user in "${all_users[@]}"; do
+            # Skip empty, duplicates, and invalid usernames
+            [[ -z "$user" ]] && continue
+            [[ " $processed " =~ " $user " ]] && continue
+            [[ ! "$user" =~ ^[a-zA-Z0-9._-]+$ ]] && continue
+            processed="$processed $user"
+            
+            # Create user directory if user exists and directory missing
+            if id "$user" >/dev/null 2>&1 && [[ ! -d "$recycle_base/$user" ]]; then
+                mkdir -p "$recycle_base/$user" 2>/dev/null || continue
+                chown "$user:$user" "$recycle_base/$user" 2>/dev/null || true
+                chmod "$subdir_mode" "$recycle_base/$user" 2>/dev/null || true
+                log_info "Recreated recycle dir for: $user"
+                ((fixed++)) || true
+            fi
+        done
+    done
+    
+    [[ $fixed -gt 0 ]] && log_ok "Fixed $fixed recycle directories"
+    return 0
+}
 
+# ============================================================================
+# SERVER LIFECYCLE
+# ============================================================================
+start_server() {
+    # Run banner first (before anything else)
+    run_banner
+    
+    # Validate interval
+    [[ ! "$SMB_STATUS_UPDATE_INTERVAL" =~ ^[0-9]+$ ]] && \
+        error_exit "SMB_STATUS_UPDATE_INTERVAL must be numeric"
+    
+    # Deprecation warnings
+    [[ -n "${NUMBER_OF_SHARES:-}" ]] && \
+        log_warn "NUMBER_OF_SHARES is deprecated (shares auto-discovered via SHARE_NAME_*)"
+    [[ -n "${NUMBER_OF_USERS:-}" ]] && \
+        log_warn "NUMBER_OF_USERS is deprecated (users auto-discovered via USER_NAME_*)"
+    
     source_scripts
-
-    printf "${LITE_GREEN}Starting Samba daemon...${NC}\n"
-    if ! smbd; then
-        error_exit "Failed to start smbd"
+    
+    # === ENTERPRISE-SCALE RESOURCE LIMITS (50K+ connections) ===
+    log_info "Setting enterprise-scale resource limits..."
+    
+    # Apply kernel tuning if sysctl available and we have permissions
+    if [[ -f /etc/sysctl.d/99-samba-sysctl.conf ]]; then
+        sysctl -p /etc/sysctl.d/99-samba-sysctl.conf 2>/dev/null && \
+            log_ok "Applied kernel tuning from /etc/sysctl.d/99-samba-sysctl.conf" || \
+            log_warn "Could not apply sysctl (need --privileged)"
+    elif [[ -f /etc/sysctl.conf ]]; then
+        sysctl -p /etc/sysctl.conf 2>/dev/null && \
+            log_ok "Applied kernel tuning from /etc/sysctl.conf" || \
+            log_warn "Could not apply sysctl (need --privileged)"
     fi
     
-    printf "${LITE_GREEN}Samba daemon started successfully${NC}\n\n"
-
+    # File descriptors: need ~2 per connection + overhead
+    # 50 connections × 1000 clients = 50,000 connections × 2 = 100,000+ FDs
+    ulimit -n 1048576 2>/dev/null || ulimit -n 524288 2>/dev/null || \
+        ulimit -n 262144 2>/dev/null || ulimit -n 131072 2>/dev/null || \
+        log_warn "Could not set high file descriptor limit (need Docker ulimits)"
+    
+    # Max processes
+    ulimit -u 65535 2>/dev/null || log_warn "Could not set process limit"
+    
+    # Core dumps (disable for production)
+    ulimit -c 0 2>/dev/null || true
+    
+    # Stack size
+    ulimit -s unlimited 2>/dev/null || true
+    
+    log_ok "Resource limits: nofile=$(ulimit -n), nproc=$(ulimit -u)"
+    
+    printf "${GREEN}Starting Samba...${NC}\n"
+    smbd || error_exit "Failed to start smbd"
+    log_ok "Samba started successfully"
+    
+    # Simple status monitoring loop - no background processes needed
     while true; do
-        smbstatus
-        sleep "$SMB_STATUS_UPDATE_INTERVAL" &
-        pid=$!
-        wait "$pid" 2>/dev/null || true
-        pid=""
+        smbstatus 2>/dev/null || true
+        check_recycle_bins || true
+        sleep "$SMB_STATUS_UPDATE_INTERVAL" || true
     done
 }
 
-# Check if debug mode is enabled
-is_debug_enabled() {
-    case "${DEBUG_MODE,,}" in
-        yes|ye|ya|y|positive|true|t|1) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# Main entry point
+# ============================================================================
+# MAIN
+# ============================================================================
 main() {
-    log_info "=== Starting Samba Server ==="
-    log_info "Script: $SMBD_SCRIPT_NAME v$SMBD_SCRIPT_VERSION"
-    log_info "Timestamp: $(date)"
     if is_debug_enabled; then
         if [[ -n "${CUSTOM_ENTRYPOINT:-}" && -x "${CUSTOM_ENTRYPOINT}" ]]; then
-            printf "${ORANGE}Running custom entrypoint: %s${NC}\n" "$CUSTOM_ENTRYPOINT"
-            printf "${ERROR_RED}Debug mode enabled. Custom entrypoint will be executed.${NC}\n"
-            printf "${GREEN}Entering Custom Entry Point in ${NC}"
-            for i in 3 2 1; do
-                printf "${NAVY_BLUE}%d ${NC}" "$i"
-                sleep 1
-            done
-            printf "\n"
+            log_warn "Debug mode: Running custom entrypoint"
             "$CUSTOM_ENTRYPOINT"
         else
-            apk add nano || error_exit "Failed to install nano"
+            apk add nano 2>/dev/null || true
             exec sleep infinity
         fi
     else
-        if ! run_banner; then
-            printf "${ORANGE}Continuing despite banner execution failure${NC}\n"
-        fi
+        run_banner
         start_server
     fi
 }
