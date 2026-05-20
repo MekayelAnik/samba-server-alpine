@@ -540,7 +540,7 @@ jobs:
 
       - name: Upload digest artifact
         if: steps.check-tag.outputs.skip_build != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digest-${{ needs.check-releases.outputs.image_tag }}-${{ matrix.platform_slug }}
           path: /tmp/digests/*
@@ -564,7 +564,7 @@ jobs:
       - name: Download all digests
         id: download-digests
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
           pattern: digest-${{ needs.check-releases.outputs.image_tag }}-*
