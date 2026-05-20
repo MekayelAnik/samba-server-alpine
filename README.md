@@ -60,6 +60,7 @@
     </tr>
   </tbody>
 </table>
+<!-- VERSION_TAGS_START -->
 <h2>Version Tags</h2>
 <p>This image provides various versions that are available via tags. Please read the <a href="https://www.samba.org/" rel="nofollow noopener">update information</a> carefully and exercise caution when using "older versions" tags as they tend to contain unfixed bugs. </p>
 <table>
@@ -74,15 +75,16 @@
     <tr>
       <td align="center">latest</td>
       <td align="center">✅</td>
-      <td>Stable "SAMBA releases</td>
+      <td>Stable Samba release</td>
     </tr>
     <tr>
-      <td align="center">4.18.6</td>
+      <td align="center">4.23.7-r0</td>
       <td align="center">✅</td>
-      <td>Static "SAMBA" build version 4.18.6</td>
+      <td>Samba build version 4.23.7-r0</td>
     </tr>
   </tbody>
 </table>
+<!-- VERSION_TAGS_END -->
 <h2>Running Image :</h2>
 <p>Here are some example snippets to help you get started creating a container.</p>
 <h3>Docker Compose (recommended, <a href="https://itnext.io/a-beginners-guide-to-deploying-a-docker-application-to-production-using-docker-compose-de1feccd2893" rel="nofollow noopener">click here for more info</a>) </h3>

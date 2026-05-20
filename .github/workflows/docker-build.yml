@@ -1030,6 +1030,15 @@ jobs:
             echo "Updated component version table: samba=${SAMBA_VERSION}"
           fi
 
+          # Update version tags table between markers
+          if grep -q 'VERSION_TAGS_START' README.md; then
+            sed -i '/VERSION_TAGS_START/,/VERSION_TAGS_END/{
+              s|<td align="center">[0-9][0-9.]*-r[0-9]*</td>|<td align="center">'"${SAMBA_VERSION}"'</td>|
+              s|Samba build version [0-9][0-9.]*-r[0-9]*|Samba build version '"${SAMBA_VERSION}"'|
+            }' README.md
+            echo "Updated version tags table: samba=${SAMBA_VERSION}"
+          fi
+
       - name: Commit and push
         run: |
           set -euo pipefail
