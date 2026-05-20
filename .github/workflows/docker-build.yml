@@ -690,20 +690,20 @@ jobs:
             TAG_ARGS="$TAG_ARGS -t $TAG"
           done
 
-          ANNOTATIONS=""
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.source=https://github.com/${{ github.repository }}"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.description=Samba Server on Alpine Linux"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.licenses=GPL-3.0"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.title=samba-server-alpine"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.url=https://github.com/${{ github.repository }}"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.vendor=MD. MEKAYEL ANIK"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:dev.mekayelanik.country-of-origin=Bangladesh"
-          ANNOTATIONS="$ANNOTATIONS --annotation \"index:dev.mekayelanik.message=== Free Palestine ==\""
+          ANNO_ARGS=()
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.description=Samba Server on Alpine Linux")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.licenses=GPL-3.0")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.title=samba-server-alpine")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.url=https://github.com/${{ github.repository }}")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.vendor=MD. MEKAYEL ANIK")
+          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.country-of-origin=Bangladesh")
+          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.message=== Free Palestine ==")
 
           for attempt in 1 2 3 4 5; do
             echo "Attempt $attempt: Creating GHCR manifest..."
-            if docker buildx imagetools create $ANNOTATIONS $TAG_ARGS $DIGESTS 2>&1; then
+            if docker buildx imagetools create "${ANNO_ARGS[@]}" $TAG_ARGS $DIGESTS 2>&1; then
               echo "GHCR manifest created successfully"
               break
             fi
@@ -729,20 +729,20 @@ jobs:
             TAG_ARGS="$TAG_ARGS -t $TAG"
           done
 
-          ANNOTATIONS=""
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.source=https://github.com/${{ github.repository }}"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.description=Samba Server on Alpine Linux"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.licenses=GPL-3.0"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.title=samba-server-alpine"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.url=https://github.com/${{ github.repository }}"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:org.opencontainers.image.vendor=MD. MEKAYEL ANIK"
-          ANNOTATIONS="$ANNOTATIONS --annotation index:dev.mekayelanik.country-of-origin=Bangladesh"
-          ANNOTATIONS="$ANNOTATIONS --annotation \"index:dev.mekayelanik.message=== Free Palestine ==\""
+          ANNO_ARGS=()
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.description=Samba Server on Alpine Linux")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.licenses=GPL-3.0")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.title=samba-server-alpine")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.url=https://github.com/${{ github.repository }}")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.vendor=MD. MEKAYEL ANIK")
+          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.country-of-origin=Bangladesh")
+          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.message=== Free Palestine ==")
 
           for attempt in 1 2 3 4 5; do
             echo "Attempt $attempt: Creating Docker Hub manifest..."
-            if docker buildx imagetools create $ANNOTATIONS $TAG_ARGS "$SOURCE" 2>&1; then
+            if docker buildx imagetools create "${ANNO_ARGS[@]}" $TAG_ARGS "$SOURCE" 2>&1; then
               echo "Docker Hub manifest created successfully"
               break
             fi
