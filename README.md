@@ -18,7 +18,7 @@
     <tr>
       <td>Samba</td>
       <td><a href="https://pkgs.alpinelinux.org/package/edge/main/x86/samba">Alpine edge/main</a></td>
-      <td><code>4.23.7-r0</code></td>
+      <td><code>4.23.10-r0</code></td>
     </tr>
     <tr>
       <td>Alpine Base</td>
@@ -78,9 +78,9 @@
       <td>Stable Samba release</td>
     </tr>
     <tr>
-      <td align="center">4.23.7-r0</td>
+      <td align="center">4.23.10-r0</td>
       <td align="center">✅</td>
-      <td>Samba build version 4.23.7-r0</td>
+      <td>Samba build version 4.23.10-r0</td>
     </tr>
   </tbody>
 </table>
